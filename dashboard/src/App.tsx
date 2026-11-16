@@ -6,6 +6,7 @@ import { NewsPage } from "./pages/NewsPage";
 import { NewsDetailPage } from "./pages/NewsDetailPage";
 import { LogsPage } from "./pages/LogsPage";
 import { TechnicalsPage } from "./pages/TechnicalsPage";
+import { CandlesPage } from "./pages/CandlesPage";
 import { MarketPage } from "./pages/MarketPage";
 import { OrderBookPage } from "./pages/OrderBookPage";
 import { BrokersPage } from "./pages/BrokersPage";
@@ -21,6 +22,7 @@ function App() {
           <Route path="/news/:id" element={<NewsDetailPage />} />
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/technicals" element={<TechnicalsPage />} />
+          <Route path="/candles" element={<CandlesPage />} />
           <Route path="/market" element={<MarketPage />} />
           <Route path="/orderbook" element={<OrderBookPage />} />
           <Route path="/brokers" element={<BrokersPage />} />

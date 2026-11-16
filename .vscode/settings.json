@@ -9,5 +9,6 @@
         "**/main.log": true,
         "**/main.gz": true,
         "**/main.out": true
-    }
+    },
+    "r.lsp.promptToInstall": false
 }

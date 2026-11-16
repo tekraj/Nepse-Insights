@@ -86,6 +86,9 @@ class FloorSheetService:
             {"since": since},
         ).all()
         names = {int(r.id): r.name for r in rows}
+        # NEPSE's official member list covers brokers that haven't traded
+        # lately too (e.g. suspended ones in old sessions).
+        names.update({int(r.member_code): r.member_name for r in self._db.execute(text("SELECT member_code, member_name FROM nepse_broker")).all()})
         _name_cache = (now, names)
         return names
 

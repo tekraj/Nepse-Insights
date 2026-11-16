@@ -43,8 +43,10 @@ class ResearchHistoryBackfillWorkflow:
                                       in the last 6 days, unless forced).
       4. nepse_intraday_tick       -- ~1-minute ticks for all indices back to
                                       INTRADAY_BACKFILL_START_DATE, plus
-                                      opt-in equities (INTRADAY_BACKFILL_STOCKS).
-                                      Resumable via research_backfill_state.
+                                      opt-in equities (INTRADAY_BACKFILL_STOCKS;
+                                      "ALL" includes equities delisted since
+                                      that date). Resumable via
+                                      research_backfill_state.
     Requests to merolagani are paced MEROLAGANI_REQUEST_PAUSE_SECONDS apart.
     One symbol failing is recorded and skipped, never fatal to the run."""
 
@@ -119,7 +121,10 @@ class ResearchHistoryBackfillWorkflow:
                 )
 
             targets = [(spec.name, "index", spec.merolagani_symbol) for spec in INDEX_REGISTRY] if cfg.intraday_backfill_indices else []
-            targets += [(s, "equity", s) for s in intraday_stock_symbols(cfg.intraday_backfill_stocks, equities)]
+            targets += [
+                (s, "equity", s)
+                for s in intraday_stock_symbols(cfg.intraday_backfill_stocks, equities, cfg.intraday_backfill_start_date)
+            ]
             for symbol, kind, source_symbol in targets:
                 try:
                     result = await workflow.execute_activity(

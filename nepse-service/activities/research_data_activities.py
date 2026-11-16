@@ -12,7 +12,7 @@ import asyncio
 from datetime import date, datetime, time as dtime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from temporalio import activity
 
@@ -26,7 +26,7 @@ from nepse_common.db.upserts import (
     upsert_stock_daily_adjusted,
     upsert_stock_daily_raw,
 )
-from nepse_common.models import ResearchBackfillState
+from nepse_common.models import NepseStockDaily, ResearchBackfillState
 
 from scraper.merolagani_history import NPT, fetch_daily_bars, fetch_intraday_ticks, npt_today
 from scraper.nepse_market_data import fetch_company_list, fetch_index_history, fetch_today_price
@@ -38,14 +38,23 @@ _SESSION_FINAL_AFTER = dtime(15, 10)
 _DAILY_REFRESH_DATASET = "daily_full_refresh"
 
 
-def intraday_stock_symbols(setting: str, equities: list[dict[str, Any]]) -> list[str]:
+def intraday_stock_symbols(setting: str, equities: list[dict[str, Any]], traded_since: str | None = None) -> list[str]:
     """INTRADAY_BACKFILL_STOCKS: "" -> none, "ALL" -> every active equity,
-    otherwise a comma-separated symbol list."""
+    otherwise a comma-separated symbol list. With `traded_since` (ISO date),
+    "ALL" also takes delisted/suspended equities whose last daily bar is on
+    or after it -- the history walk needs them (the 2021-23 bank/insurer
+    mergers removed ~60 of them) to avoid survivorship bias; the daily
+    forward fill leaves them out since they no longer trade."""
     setting = (setting or "").strip()
     if not setting:
         return []
     if setting.upper() == "ALL":
-        return [e["symbol"] for e in equities if e.get("status") == "A"]
+        return [
+            e["symbol"]
+            for e in equities
+            if e.get("status") == "A"
+            or (traded_since and (e.get("last_trade_date") or "") >= traded_since)
+        ]
     return [s.strip().upper() for s in setting.split(",") if s.strip()]
 
 
@@ -116,8 +125,17 @@ async def sync_security_master_activity(timeout: int) -> list[dict[str, Any]]:
     for r in records:
         if r["instrument_type"] == "Equity" and equities.get(r["symbol"]) != "A":
             equities[r["symbol"]] = r["status"]
+    with session_scope(config.database) as session:
+        last_trade = dict(
+            session.execute(
+                select(NepseStockDaily.symbol, func.max(NepseStockDaily.trade_date)).group_by(NepseStockDaily.symbol)
+            ).all()
+        )
     activity.logger.info(f"[Research] security master: {len(records)} securities, {len(equities)} equities")
-    return [{"symbol": s, "status": st} for s, st in sorted(equities.items())]
+    return [
+        {"symbol": s, "status": st, "last_trade_date": last_trade[s].isoformat() if s in last_trade else None}
+        for s, st in sorted(equities.items())
+    ]
 
 
 @activity.defn
@@ -189,6 +207,47 @@ async def mark_daily_refresh_done_activity(rows_written: int) -> None:
     _save_state(_DAILY_REFRESH_DATASET, "*", rows_written=rows_written, exhausted=True, last_error=None)
 
 
+def _ticks_to_raw_prices(symbol: str, ticks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """merolagani serves past equity ticks bonus/right-adjusted, on a basis
+    that matches neither the raw prices nor its own daily adj_* series
+    (NABIL 2021-08-08: tick 1065.01, raw close 1494, daily adj 898.74) and
+    shifts at every new corporate action. The factor is constant within a
+    session, so each session's ticks are rescaled to raw NPR by
+    raw close / last tick price -- the same basis as the floor sheet,
+    nepse_today_price and the raw nepse_stock_daily columns, and one that
+    never changes retroactively. Volumes are already raw shares. merolagani
+    answers any window with whole sessions (its range is date-granular), so
+    a session's last tick is always in the batch. Sessions without a daily
+    bar to anchor to (today before the EOD capture) are dropped and picked
+    up by the next forward run; returns (ticks, dropped)."""
+    if not ticks:
+        return [], 0
+    by_day: dict[date, list[dict[str, Any]]] = {}
+    for t in ticks:
+        by_day.setdefault(t["tick_time"].date(), []).append(t)
+    config = load_app_config()
+    with session_scope(config.database) as session:
+        closes = dict(
+            session.execute(
+                select(NepseStockDaily.trade_date, NepseStockDaily.close).where(
+                    NepseStockDaily.symbol == symbol,
+                    NepseStockDaily.trade_date.in_(list(by_day)),
+                )
+            ).all()
+        )
+    out: list[dict[str, Any]] = []
+    dropped = 0
+    for day, day_ticks in by_day.items():
+        day_ticks.sort(key=lambda t: t["tick_time"])
+        close, last = closes.get(day), day_ticks[-1]["price"]
+        if not close or not last:
+            dropped += len(day_ticks)
+            continue
+        factor = close / last
+        out.extend({**t, "price": round(t["price"] * factor, 2)} for t in day_ticks)
+    return out, dropped
+
+
 @activity.defn
 async def backfill_intraday_ticks_activity(
     symbol: str,
@@ -219,12 +278,16 @@ async def backfill_intraday_ticks_activity(
     now = _now_npt_naive()
     written = 0
     windows = 0
+    unanchored = 0
 
     async def _window(start: datetime, end: datetime) -> int:
-        nonlocal windows
+        nonlocal windows, unanchored
         ticks = await asyncio.to_thread(
             fetch_intraday_ticks, source_symbol, start.replace(tzinfo=NPT), end.replace(tzinfo=NPT), timeout
         )
+        if instrument_type == "equity":
+            ticks, dropped = _ticks_to_raw_prices(symbol, ticks)
+            unanchored += dropped
         rows = [{"symbol": symbol, "instrument_type": instrument_type, "source": "merolagani", **t} for t in ticks]
         if rows:
             with session_scope(config.database) as session:
@@ -274,6 +337,7 @@ async def backfill_intraday_ticks_activity(
         "oldest": oldest.isoformat() if oldest else None,
         "newest": newest.isoformat() if newest else None,
         "exhausted": exhausted,
+        "unanchored_ticks": unanchored,
     }
     activity.logger.info(f"[Research] intraday {result}")
     return result

@@ -7,11 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from deps import get_current_claims, get_db
+from services.candle_service import TIMEFRAMES, CandleService
 from services.floorsheet_service import FloorSheetService
 from services.market_service import MarketService
 from services.news_service import NewsService
 from services.nepse_service import NepseIndexService
 from services.pipeline_log_service import PipelineLogService
+from services.stock_service import StockService
 
 router = APIRouter(dependencies=[Depends(get_current_claims)])
 
@@ -128,6 +130,43 @@ def dashboard_indicators(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return NepseIndexService(db).get_indicators(index_name, days)
+
+
+@router.get("/stocks")
+def dashboard_stocks(
+    q: str = Query(default="", max_length=60, description="symbol, company name or sector; empty = most traded"),
+    limit: int = Query(default=20, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return {"stocks": StockService(db).search(q, limit)}
+
+
+@router.get("/stock-indicators")
+def dashboard_stock_indicators(
+    symbol: str = Query(..., min_length=1, max_length=20),
+    days: int = Query(default=400, ge=0, le=20000, description="calendar days; 0 = full history"),
+    basis: str = Query(default="adjusted", pattern="^(adjusted|raw)$"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    result = StockService(db).get_indicators(symbol, days, basis)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No daily history for {symbol}")
+    return result
+
+
+@router.get("/candles")
+def dashboard_candles(
+    symbol: str = Query(..., min_length=1, max_length=60, description="index name (kind=index) or stock symbol"),
+    kind: str = Query(default="index", pattern="^(index|stock)$"),
+    tf: str = Query(default="15m", description="1m, 5m, 15m, 30m, 1h, 1d, 1w or 1M"),
+    before: int | None = Query(default=None, ge=0, description="epoch ms: only bars starting before this (older pages)"),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    basis: str = Query(default="adjusted", pattern="^(adjusted|raw)$", description="stocks: bonus/right-adjusted or as traded"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if tf not in TIMEFRAMES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"tf must be one of {', '.join(TIMEFRAMES)}")
+    return CandleService(db).candles(kind, symbol, tf, before, limit, basis)
 
 
 @router.get("/indices")

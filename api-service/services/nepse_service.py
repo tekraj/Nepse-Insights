@@ -215,20 +215,6 @@ class NepseIndexService:
         returned (they all have daily history)."""
         return [snap for snap in self._snapshots() if snap["index"] != _NEPSE_MAIN_NAME]
 
-    def get_daily_closes(self, index_name: str) -> list[dict]:
-        """Every official daily close of `index_name` (nepse_index_daily:
-        NEPSE from 2000, most sub-indices from 2014-2016), oldest first."""
-        rows = self._db.execute(
-            text(
-                """
-                SELECT trade_date, close FROM nepse_index_daily
-                WHERE index_name = :name ORDER BY trade_date
-                """
-            ),
-            {"name": index_name},
-        ).all()
-        return [{"date": r.trade_date.isoformat(), "value": r.close} for r in rows]
-
     def list_index_options(self) -> list[dict]:
         """One entry per index in nepse_index_daily: sessions of history
         (`distinct_days`) and latest value."""
@@ -243,55 +229,75 @@ class NepseIndexService:
         ]
 
     def get_indicators(self, index_name: str, days: int) -> dict:
-        """Daily closes plus derived technical indicators for `index_name`
-        over the last `days` calendar days (0 = full history).
+        """Official daily closes (nepse_index_daily: NEPSE from 2000, most
+        sub-indices from 2014-2016) plus technical indicators and turnover
+        for `index_name`; see indicator_points for the windowing."""
+        rows = self._db.execute(
+            text(
+                """
+                SELECT trade_date, close, turnover FROM nepse_index_daily
+                WHERE index_name = :name ORDER BY trade_date
+                """
+            ),
+            {"name": index_name},
+        ).all()
+        payload = indicator_points(
+            [r.trade_date.isoformat() for r in rows],
+            [r.close for r in rows],
+            days,
+            extra={"turnover": [r.turnover for r in rows]},
+        )
+        return {"kind": "index", "index_name": index_name, "days_requested": days, **payload}
 
-        The indicators are computed over the index's FULL daily history and
-        then cut to the window, so SMA 200 / MACD / RSI are warmed up from
-        the window's first point instead of starting blank. The series is
-        sessions only (no calendar gaps), so forward-filling is a no-op
-        safety net here.
-        """
-        closes = self.get_daily_closes(index_name)
-        dates = [c["date"] for c in closes]
-        raw_values = [c["value"] for c in closes]
 
-        filled_values = indicator_service.forward_fill(raw_values)
+def indicator_points(
+    dates: list[str], values: list[float | None], days: int, extra: dict[str, list[Any]] | None = None
+) -> dict[str, Any]:
+    """Technical indicators over a daily close series (oldest first), cut
+    to the last `days` calendar days before its final date (0 = all).
 
-        sma_20 = indicator_service.compute_sma(filled_values, 20)
-        sma_50 = indicator_service.compute_sma(filled_values, 50)
-        sma_200 = indicator_service.compute_sma(filled_values, 200)
-        ema_12 = indicator_service.compute_ema(filled_values, 12)
-        ema_26 = indicator_service.compute_ema(filled_values, 26)
-        macd = indicator_service.compute_macd(filled_values)
-        rsi_14 = indicator_service.compute_rsi(filled_values, 14)
-        bollinger = indicator_service.compute_bollinger_bands(filled_values, 20)
+    The indicators are computed over the FULL series and then cut to the
+    window, so SMA 200 / MACD / RSI are warmed up from the window's first
+    point instead of starting blank. The series is sessions only (no
+    calendar gaps), so forward-filling is a no-op safety net here. `extra`
+    adds per-point columns (aligned with `dates`) as-is. Indicator values
+    are rounded to 4 decimals (a 25-year series is ~4,000 points).
+    """
+    filled_values = indicator_service.forward_fill(values)
 
-        start = (date.fromisoformat(dates[-1]) - timedelta(days=days)).isoformat() if dates and days > 0 else ""
-        points = [
-            {
-                "date": dates[i],
-                "close": raw_values[i],
-                "sma_20": sma_20[i],
-                "sma_50": sma_50[i],
-                "sma_200": sma_200[i],
-                "ema_12": ema_12[i],
-                "ema_26": ema_26[i],
-                "macd": macd["macd"][i],
-                "macd_signal": macd["signal"][i],
-                "macd_histogram": macd["histogram"][i],
-                "rsi_14": rsi_14[i],
-                "bollinger_upper": bollinger["upper"][i],
-                "bollinger_middle": bollinger["middle"][i],
-                "bollinger_lower": bollinger["lower"][i],
-            }
-            for i in range(len(dates))
-            if dates[i] >= start
-        ]
+    sma_20 = indicator_service.compute_sma(filled_values, 20)
+    sma_50 = indicator_service.compute_sma(filled_values, 50)
+    sma_200 = indicator_service.compute_sma(filled_values, 200)
+    ema_12 = indicator_service.compute_ema(filled_values, 12)
+    ema_26 = indicator_service.compute_ema(filled_values, 26)
+    macd = indicator_service.compute_macd(filled_values)
+    rsi_14 = indicator_service.compute_rsi(filled_values, 14)
+    bollinger = indicator_service.compute_bollinger_bands(filled_values, 20)
+    extra = extra or {}
 
-        return {
-            "index_name": index_name,
-            "days_requested": days,
-            "days_available": len(dates),
-            "points": points,
+    start = (date.fromisoformat(dates[-1]) - timedelta(days=days)).isoformat() if dates and days > 0 else ""
+    series = {
+        "sma_20": sma_20,
+        "sma_50": sma_50,
+        "sma_200": sma_200,
+        "ema_12": ema_12,
+        "ema_26": ema_26,
+        "macd": macd["macd"],
+        "macd_signal": macd["signal"],
+        "macd_histogram": macd["histogram"],
+        "rsi_14": rsi_14,
+        "bollinger_upper": bollinger["upper"],
+        "bollinger_middle": bollinger["middle"],
+        "bollinger_lower": bollinger["lower"],
+    }
+    points = [
+        {
+            "date": dates[i],
+            "close": values[i],
+            **{name: _round(column[i], 4) for name, column in series.items()},
+            **{name: column[i] for name, column in extra.items()},
         }
+        for i in range(len(dates))
+        if dates[i] >= start
+    ]
+    return {"days_available": len(dates), "points": points}

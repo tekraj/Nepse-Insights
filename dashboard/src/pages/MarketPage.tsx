@@ -195,7 +195,7 @@ export function MarketPage() {
                 <YAxis domain={["auto", "auto"]} stroke={AXIS} width={64} />
                 <Tooltip
                   {...TOOLTIP}
-                  labelFormatter={(v) => formatDay(v)}
+                  labelFormatter={(v) => formatDay(String(v))}
                   formatter={(v, name) => [formatNumber(v, 2), name]}
                 />
                 {shaded.map((e) => (
@@ -215,7 +215,7 @@ export function MarketPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                 <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={36} stroke={AXIS} />
                 <YAxis stroke={AXIS} tickFormatter={(v) => `${v}%`} width={52} />
-                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDay(v)} formatter={(v) => [formatPct(v, 2), "Drawdown"]} />
+                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDay(String(v))} formatter={(v) => [formatPct(v, 2), "Drawdown"]} />
                 <ReferenceLine y={-threshold * 100} stroke={COLORS.red} strokeDasharray="4 3" />
                 <Area type="monotone" dataKey="drawdown_pct" stroke={COLORS.red} fill={COLORS.red} fillOpacity={0.25} dot={false} isAnimationActive={false} />
               </AreaChart>
@@ -229,7 +229,7 @@ export function MarketPage() {
                 <XAxis dataKey="date" tickFormatter={dayTick} minTickGap={36} stroke={AXIS} />
                 <YAxis yAxisId="r" stroke={AXIS} tickFormatter={(v) => `${v}%`} width={52} />
                 <YAxis yAxisId="v" orientation="right" stroke={COLORS.amber} tickFormatter={(v) => `${v}%`} width={52} />
-                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDay(v)} formatter={(v, name) => [formatPct(v, 2), name]} />
+                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDay(String(v))} formatter={(v, name) => [formatPct(v, 2), name]} />
                 <Bar yAxisId="r" dataKey="log_return_pct" name="Log return" fill={COLORS.blue} isAnimationActive={false} />
                 <Line yAxisId="v" type="monotone" dataKey="vol_20" name="Vol (20)" stroke={COLORS.amber} strokeWidth={1.75} dot={false} isAnimationActive={false} />
               </ComposedChart>
@@ -250,7 +250,7 @@ export function MarketPage() {
               {hasTransactions ? <YAxis yAxisId="n" orientation="right" stroke={COLORS.violet} tickFormatter={(v) => formatCompact(v, 0)} width={48} /> : null}
               <Tooltip
                 {...TOOLTIP}
-                labelFormatter={(v) => formatDay(v)}
+                labelFormatter={(v) => formatDay(String(v))}
                 formatter={(v, name) => [name === "Turnover" ? `NPR ${formatCompact(v, 2)}` : formatNumber(v, 0), name]}
               />
               <Bar yAxisId="t" dataKey="turnover" name="Turnover" fill={COLORS.teal} fillOpacity={0.7} isAnimationActive={false} />
@@ -309,7 +309,7 @@ export function MarketPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                 <XAxis dataKey="t" tickFormatter={shortTime} minTickGap={36} stroke={AXIS} />
                 <YAxis domain={["auto", "auto"]} stroke={AXIS} width={64} />
-                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDate(v)} formatter={(v) => [formatNumber(v, 2), indexName]} />
+                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDate(String(v))} formatter={(v) => [formatNumber(v, 2), indexName]} />
                 {prevClose ? (
                   <ReferenceLine y={prevClose} stroke={COLORS.slate} strokeDasharray="4 3" ifOverflow="extendDomain" />
                 ) : null}

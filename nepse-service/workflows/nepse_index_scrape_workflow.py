@@ -74,6 +74,13 @@ class NepseIndexScrapeWorkflow:
                     nepse_source = str(
                         nepse_data.get("source_used") or nepse_data.get("source") or "unknown"
                     )
+                    if nepse_records == 0:
+                        # Every source in the fallback chain came back empty
+                        # (e.g. no network): nothing was saved, so this run
+                        # must not count as a success on the Logs page.
+                        status = "failed"
+                        message = "no index data from any source"
+                        error_text = f"all index sources returned nothing ({nepse_source})"
         except Exception as e:  # noqa: BLE001 - mirrors old broad except in run_pipeline()
             status = "failed"
             message = "pipeline crashed"

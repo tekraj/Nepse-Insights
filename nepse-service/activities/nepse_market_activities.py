@@ -12,7 +12,9 @@ from temporalio import activity
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
+from nepse_common.db.upserts import upsert_brokers
 from nepse_common.models import (
+    NepseBroker,
     NepseFloorsheet,
     NepseIndexDaily,
     NepseMarketDepth,
@@ -26,6 +28,7 @@ from scraper.merolagani_floorsheet import FloorSheetHistory, FloorSheetPageError
 from scraper.merolagani_history import npt_today
 from scraper.nepse_market_data import (
     FloorSheetPager,
+    fetch_broker_list,
     fetch_floor_sheet,
     fetch_market_depth,
     fetch_security_id_map,
@@ -52,11 +55,10 @@ FLOOR_SHEET_PAGE_PAUSE_SECONDS = 1.0
 _FLOOR_SHEET_COMPLETE_RATIO = 0.998
 _FLOOR_SHEET_HISTORY_DATASET = "floorsheet_history"
 
-# Broker names (NEPSE publishes them only in post-close sweeps) are attached
-# to backfilled trades only for sessions this recent: broker numbers are
-# stable, but firms rename and merge, so today's name for a number may be
-# wrong for 2020. Older sessions keep the member id only.
-_BROKER_NAME_MAX_AGE_DAYS = 90
+# Broker names for backfilled trades come from nepse_broker (NEPSE's official
+# member list, i.e. each code's *current* name -- a firm that renamed shows
+# its new name for old sessions too), refreshed when older than this.
+_BROKER_MASTER_MAX_AGE = timedelta(days=7)
 
 # merolagani history requests: generous timeout (old dates take 10-30 s per
 # page server-side) and backoff between retries of one page / one date
@@ -338,10 +340,47 @@ async def list_trading_days_activity(start_date: str, end_date: str) -> list[str
         return [d.isoformat() for d in days]
 
 
+def refresh_broker_master(timeout: int) -> int:
+    """Upserts NEPSE's official member list into nepse_broker; returns the
+    number of brokers. Blocking -- call via asyncio.to_thread."""
+    rows = fetch_broker_list(timeout)
+    records = [
+        {
+            "member_code": r["memberCode"],
+            "member_name": " ".join(str(r["memberName"]).split()),
+            "active_status": r.get("activeStatus"),
+            "membership_type": (r.get("membershipTypeMaster") or {}).get("membershipType"),
+            "is_dealer": {"Y": True, "N": False}.get(r.get("isDealer")),
+            "nepse_member_id": r.get("id"),
+        }
+        for r in rows
+        if r.get("memberCode") is not None and r.get("memberName")
+    ]
+    config = load_app_config()
+    with session_scope(config.database) as session:
+        upsert_brokers(session, records)
+    return len(records)
+
+
+def _ensure_broker_master(timeout: int) -> None:
+    """Refreshes nepse_broker when it is empty or stale. A failed refresh
+    is logged, not raised: the stored (or sweep-learned) names still apply."""
+    config = load_app_config()
+    with session_scope(config.database) as session:
+        last = session.execute(select(func.max(NepseBroker.updated_at))).scalar_one()
+    if last is not None and datetime.now() - last < _BROKER_MASTER_MAX_AGE:
+        return
+    try:
+        refresh_broker_master(timeout)
+    except Exception as e:  # noqa: BLE001
+        activity.logger.warning(f"[FloorSheet] broker list refresh failed: {e}")
+
+
 def _broker_names(session) -> dict[int, str]:
-    """member id -> broker name, learned from the last 30 days of post-close
-    sweeps (NEPSE publishes both); merolagani's history only has the
-    numbers. Cached per process -- this runs once per backfilled session."""
+    """member code -> broker name: nepse_broker (official list), plus names
+    seen in the last 30 days of post-close sweeps for codes the list lacks.
+    merolagani's history only has the codes. Cached per process -- this
+    runs once per backfilled session."""
     global _broker_name_cache
     now = time.monotonic()
     if _broker_name_cache is not None and now - _broker_name_cache[0] < _BROKER_NAME_CACHE_SECONDS:
@@ -359,6 +398,7 @@ def _broker_names(session) -> dict[int, str]:
             .distinct()
         ).all()
         names.update({member_id: name for member_id, name in rows})
+    names.update(dict(session.execute(select(NepseBroker.member_code, NepseBroker.member_name)).all()))
     _broker_name_cache = (now, names)
     return names
 
@@ -366,9 +406,8 @@ def _broker_names(session) -> dict[int, str]:
 @activity.defn
 async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_seconds: float) -> dict[str, Any]:
     """Completes one past session in nepse_floorsheet from merolagani's
-    floor-sheet history: fills buyer/seller broker ids (and, for sessions
-    within _BROKER_NAME_MAX_AGE_DAYS, names known from post-close sweeps)
-    on stored contracts and inserts
+    floor-sheet history: fills buyer/seller broker ids (and names, from
+    nepse_broker) on stored contracts and inserts
     the contracts the 500-per-minute intraday scrape missed (those get no
     trade_time -- merolagani doesn't publish it). merolagani lists equities
     only, so mutual-fund/debenture trades keep NULL broker ids. Skips a day
@@ -391,8 +430,10 @@ async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_se
             .select_from(NepseFloorsheet)
             .where(NepseFloorsheet.business_date == day_iso, NepseFloorsheet.buyer_member_id.isnot(None))
         ).scalar_one()
-        recent = (npt_today() - day).days <= _BROKER_NAME_MAX_AGE_DAYS
-        names = _broker_names(session) if recent else {}
+
+    await asyncio.to_thread(_ensure_broker_master, timeout)
+    with session_scope(config.database) as session:
+        names = _broker_names(session)
 
     timeout = max(timeout, _MEROLAGANI_FLOOR_TIMEOUT)
 

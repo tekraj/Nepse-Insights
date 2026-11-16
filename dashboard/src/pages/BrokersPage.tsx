@@ -218,7 +218,7 @@ export function BrokersPage() {
                 />
                 <Tooltip
                   {...TOOLTIP}
-                  labelFormatter={(v) => formatDate(v)}
+                  labelFormatter={(v) => formatDate(String(v))}
                   formatter={(v, name) => [name === "Trades" ? formatNumber(v, 0) : name === "VWAP" ? formatNumber(v, 2) : `NPR ${formatCompact(v, 2)}`, name]}
                 />
                 <Bar yAxisId="n" dataKey="trades" name="Trades" fill={COLORS.blue} fillOpacity={0.75} isAnimationActive={false} />
@@ -277,7 +277,7 @@ export function BrokersPage() {
               <YAxis yAxisId="h" orientation="right" stroke={COLORS.violet} width={52} tickFormatter={(v) => formatNumber(v, 3)} />
               <Tooltip
                 {...TOOLTIP}
-                labelFormatter={(v) => formatDay(v)}
+                labelFormatter={(v) => formatDay(String(v))}
                 formatter={(v, name) => [name === "HHI (buy)" ? formatNumber(v, 4) : formatPct(v, 1), name]}
               />
               <Legend />

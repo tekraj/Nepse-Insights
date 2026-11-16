@@ -1,7 +1,7 @@
 """Scrapers for the official nepalstock.com.np market-data endpoints:
 today's price for all securities, floor sheet, sector summary, per-security
-market depth, market status, the official index values/history and the
-company list.
+market depth, market status, the official index values/history, the
+company list and the broker (member) list.
 
 Auth is handled by scraper/nepse_wasm_auth.py (see its module docstring for
 the full WASM-token mechanism). Endpoint paths come from the open-source
@@ -18,6 +18,10 @@ including these behaviours the scrapers depend on:
     /api/nots/index/history/{id} serves only the last ~1 year -- deep
     history comes from merolagani instead (scraper/merolagani_history.py).
   - /api/nots/nepse-data/market-open returns {"isOpen": "OPEN"|"CLOSE", ...}.
+  - /api/nots/member (POST, verified 2026-11-16) takes a search-filter body
+    instead of the usual {"id": payload_id}; empty filters list every
+    trading member (92, incl. suspended ones), each memberCode being the
+    floor sheet's buyer/sellerMemberId.
 """
 from __future__ import annotations
 
@@ -37,6 +41,8 @@ _COMPANY_LIST_PATH = "/api/nots/company/list"
 _FLOOR_SHEET_PATH = "/api/nots/nepse-data/floorsheet"
 _MARKET_DEPTH_PATH = "/api/nots/nepse-data/marketdepth/"  # + "{security_id}/"
 _MARKET_OPEN_PATH = "/api/nots/nepse-data/market-open"
+_MEMBER_LIST_PATH = "/api/nots/member"
+_MEMBER_FILTER = {"memberName": "", "contactPerson": "", "contactNumber": "", "memberCode": "", "provinceId": 0, "districtId": 0, "municipalityId": 0}
 _MAIN_INDICES_PATH = "/api/nots/nepse-index"  # NEPSE, Sensitive, Float, Sensitive Float
 _SUB_INDICES_PATH = "/api/nots"  # the 13 sector sub-indices
 _INDEX_HISTORY_PATH = "/api/nots/index/history/"  # + "{index_id}"
@@ -123,6 +129,22 @@ def fetch_company_list(timeout: int = 15) -> list[dict[str, Any]]:
     securityName, companyName, sectorName, instrumentType, status, ...}]."""
     return _content(_get_json(_COMPANY_LIST_PATH, timeout, params={"page": "0", "size": str(_PAGE_SIZE)}))
 
+
+
+def fetch_broker_list(timeout: int = 15) -> list[dict[str, Any]]:
+    """Every trading member: [{id, memberCode, memberName, activeStatus,
+    membershipTypeMaster: {membershipType}, isDealer, ...}]."""
+    auth_context = fetch_auth_context(timeout)
+    resp = nepse_request(
+        "POST",
+        ROOT_URL + _MEMBER_LIST_PATH,
+        headers=auth_headers(auth_context),
+        params={"page": "0", "size": str(_PAGE_SIZE)},
+        json=_MEMBER_FILTER,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return _content(resp.json())
 
 def fetch_security_id_map(timeout: int = 15) -> dict[str, int]:
     """symbol -> internal numeric security id, needed for the per-stock

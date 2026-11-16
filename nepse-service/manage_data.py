@@ -4,6 +4,8 @@
     docker compose exec nepse-service python manage_data.py cleanup-stale            # dry run
     docker compose exec nepse-service python manage_data.py cleanup-stale --apply
     docker compose exec nepse-service python manage_data.py crash-events --index NEPSE --threshold 0.2
+    docker compose exec nepse-service python manage_data.py fill-broker-names        # dry run
+    docker compose exec nepse-service python manage_data.py fill-broker-names --apply
 
 coverage       Row counts and date ranges of every market/research dataset.
 
@@ -12,6 +14,17 @@ crash-events   Drawdown episodes of an index deeper than --threshold, from
                trough, depth, days to trough and recovery date. A starting
                point for the detector's ground-truth crash labels; --csv
                writes them to stdout as CSV.
+
+fill-broker-names
+               Fills NULL buyer/seller_broker_name in nepse_floorsheet from
+               the member code, using nepse_broker (refreshed from NEPSE's
+               official member list first). Every session the floor-sheet
+               history backfill completed from merolagani has codes only.
+               Names are NEPSE's *current* ones (a renamed firm shows its new
+               name for old sessions); names NEPSE published with the trades
+               are never overwritten. --apply updates one session per
+               transaction, so it can be stopped and re-run (it resumes
+               where names are still NULL), then VACUUMs the table.
 
 cleanup-stale  Removes market-data rows the scrapers stored on days NEPSE did
                not trade (before is_market_open_activity checked NEPSE's own
@@ -153,6 +166,85 @@ def cleanup_stale(apply: bool, since: str) -> int:
     return 0
 
 
+
+_MISSING_NAME = """
+    ((buyer_broker_name IS NULL AND buyer_member_id IS NOT NULL)
+     OR (seller_broker_name IS NULL AND seller_member_id IS NOT NULL))
+"""
+
+
+def fill_broker_names(apply: bool, refresh: bool) -> int:
+    config = load_app_config()
+    if refresh:
+        from activities.nepse_market_activities import refresh_broker_master
+
+        print(f"nepse_broker: {refresh_broker_master(config.scraper.request_timeout)} brokers from NEPSE's member list")
+    engine = get_engine(config.database)
+    with engine.connect() as conn:
+        brokers = conn.execute(text("SELECT count(*) FROM nepse_broker")).scalar_one()
+        if brokers == 0:
+            print("nepse_broker is empty -- run without --no-refresh first.", file=sys.stderr)
+            return 1
+        days = conn.execute(
+            text(f"SELECT business_date, count(*) FROM nepse_floorsheet WHERE {_MISSING_NAME} GROUP BY 1 ORDER BY 1")
+        ).all()
+        unknown = conn.execute(
+            text(
+                """
+                SELECT code, count(*) FROM (
+                    SELECT buyer_member_id AS code FROM nepse_floorsheet WHERE buyer_broker_name IS NULL AND buyer_member_id IS NOT NULL
+                    UNION ALL
+                    SELECT seller_member_id FROM nepse_floorsheet WHERE seller_broker_name IS NULL AND seller_member_id IS NOT NULL
+                ) c
+                WHERE NOT EXISTS (SELECT 1 FROM nepse_broker b WHERE b.member_code = c.code)
+                GROUP BY 1 ORDER BY 1
+                """
+            )
+        ).all()
+    total = sum(n for _, n in days)
+    by_year: dict[str, int] = {}
+    for day, n in days:
+        by_year[day[:4]] = by_year.get(day[:4], 0) + n
+    print(f"{total:,} trades in {len(days):,} sessions lack a broker name the member code can fill:")
+    for year, n in sorted(by_year.items()):
+        print(f"    {year}  {n:,}")
+    for code, n in unknown:
+        print(f"  member code {code} is not in NEPSE's member list -- {n:,} names stay NULL")
+    if not apply:
+        print("\nDry run. Re-run with --apply to fill them.")
+        return 0
+
+    started = datetime.now()
+    done = 0
+    for i, (day, n) in enumerate(days, 1):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE nepse_floorsheet f SET
+                        buyer_broker_name = coalesce(f.buyer_broker_name,
+                            (SELECT member_name FROM nepse_broker WHERE member_code = f.buyer_member_id)),
+                        seller_broker_name = coalesce(f.seller_broker_name,
+                            (SELECT member_name FROM nepse_broker WHERE member_code = f.seller_member_id))
+                    WHERE f.business_date = :day AND {_MISSING_NAME}
+                    """
+                ),
+                {"day": day},
+            )
+        done += n
+        if i % 25 == 0 or i == len(days):
+            rate = done / max((datetime.now() - started).total_seconds(), 1)
+            eta = (total - done) / rate / 60 if rate else 0
+            print(f"  {i:,}/{len(days):,} sessions (through {day}), {done:,} trades, {rate:,.0f}/s, ~{eta:.0f} min left", flush=True)
+
+    print("VACUUM ANALYZE nepse_floorsheet (frees the old row versions for reuse) ...", flush=True)
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        # PARALLEL 0: parallel index vacuuming needs dynamic shared memory beyond
+        # the db container's 64 MB /dev/shm (Docker's default) and fails.
+        conn.execute(text("VACUUM (ANALYZE, PARALLEL 0) nepse_floorsheet"))
+    print(f"Done: {done:,} trades in {len(days):,} sessions, {(datetime.now() - started).total_seconds() / 60:.0f} min.")
+    return 0
+
 def crash_events(index_name: str, threshold: float, as_csv: bool) -> int:
     engine = get_engine(load_app_config().database)
     with engine.connect() as conn:
@@ -211,12 +303,17 @@ def main() -> int:
     crashes.add_argument("--index", default="NEPSE", help="index name as in nepse_index_daily (default NEPSE)")
     crashes.add_argument("--threshold", type=float, default=0.2, help="minimum peak-to-trough fall, e.g. 0.2 = 20%%")
     crashes.add_argument("--csv", action="store_true", help="print CSV instead of a table")
+    names = sub.add_parser("fill-broker-names", help="fill NULL broker names in nepse_floorsheet from member codes")
+    names.add_argument("--apply", action="store_true", help="actually update the rows (default: dry run)")
+    names.add_argument("--no-refresh", action="store_true", help="use nepse_broker as stored, don't re-fetch NEPSE's member list")
     args = parser.parse_args()
 
     if args.command == "coverage":
         return coverage()
     if args.command == "crash-events":
         return crash_events(args.index, args.threshold, args.csv)
+    if args.command == "fill-broker-names":
+        return fill_broker_names(args.apply, not args.no_refresh)
     return cleanup_stale(args.apply, args.since)
 
 

@@ -162,7 +162,7 @@ export function OrderBookPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                 <XAxis dataKey="t" tickFormatter={shortTime} minTickGap={36} stroke={AXIS} />
                 <YAxis domain={["auto", "auto"]} stroke={AXIS} width={60} />
-                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDate(v)} formatter={(v, name) => [formatNumber(v, 2), name]} />
+                <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDate(String(v))} formatter={(v, name) => [formatNumber(v, 2), name]} />
                 <Legend />
                 <Line type="stepAfter" dataKey="best_bid" name="Best bid" stroke={COLORS.green} dot={false} connectNulls isAnimationActive={false} />
                 <Line type="stepAfter" dataKey="best_ask" name="Best ask" stroke={COLORS.red} dot={false} connectNulls isAnimationActive={false} />
@@ -188,7 +188,7 @@ export function OrderBookPage() {
               <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
               <XAxis dataKey="t" tickFormatter={shortTime} minTickGap={36} stroke={AXIS} />
               <YAxis domain={[-1, 1]} stroke={AXIS} width={44} />
-              <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDate(v)} formatter={(v) => [formatNumber(v, 3), "Imbalance"]} />
+              <Tooltip {...TOOLTIP} labelFormatter={(v) => formatDate(String(v))} formatter={(v) => [formatNumber(v, 3), "Imbalance"]} />
               <ReferenceLine y={0} stroke={AXIS} />
               <Area type="monotone" dataKey="imbalance" stroke={COLORS.teal} fill="url(#obImb)" dot={false} isAnimationActive={false} />
             </AreaChart>
@@ -204,7 +204,7 @@ export function OrderBookPage() {
               <YAxis yAxisId="s" orientation="right" stroke={COLORS.amber} tickFormatter={(v) => `${formatNumber(v, 2)}%`} width={56} />
               <Tooltip
                 {...TOOLTIP}
-                labelFormatter={(v) => formatDate(v)}
+                labelFormatter={(v) => formatDate(String(v))}
                 formatter={(v, name) => [name === "Spread" ? formatPct(v, 3) : formatNumber(v, 0), name]}
               />
               <Legend />

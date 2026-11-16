@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from nepse_common.models import (
+    NepseBroker,
     NepseIndexDaily,
     NepseIntradayTick,
     NepseSecurity,
@@ -174,6 +175,24 @@ def upsert_securities(session: Session, rows: Sequence[dict[str, Any]]) -> int:
         affected += session.execute(stmt).rowcount or 0
     return affected
 
+
+
+def upsert_brokers(session: Session, rows: Sequence[dict[str, Any]]) -> int:
+    """rows: dicts with member_code, member_name, active_status,
+    membership_type, is_dealer, nepse_member_id. The official list wins:
+    every field is overwritten."""
+    rows = _dedupe(rows, ("member_code",))
+    if not rows:
+        return 0
+
+    table = NepseBroker.__table__
+    value_cols = ("member_name", "active_status", "membership_type", "is_dealer", "nepse_member_id")
+    stmt = pg_insert(table).values([{"member_code": r["member_code"], **{c: r.get(c) for c in value_cols}} for r in rows])
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["member_code"],
+        set_={**{c: getattr(stmt.excluded, c) for c in value_cols}, "updated_at": func.now()},
+    )
+    return session.execute(stmt).rowcount or 0
 
 def _coalesce_excluded(stmt, table, column: str):
     return func.coalesce(getattr(stmt.excluded, column), table.c[column])
