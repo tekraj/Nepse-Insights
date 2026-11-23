@@ -21,7 +21,7 @@ _CSV_IMPORT_MESSAGE = "historical_nepse_csv_import_v2"
 @workflow.defn
 class HistoricalNepseCsvImportWorkflow:
     """One-shot startup import of historical NEPSE index CSVs into
-    nepse_index. Mirrors old scheduler.py start_scheduler() CSV-import
+    market_index_snapshot. Mirrors old scheduler.py start_scheduler() CSV-import
     startup block exactly, including the idempotency check via
     has_successful_pipeline_message and the failed-status log-on-exception
     behavior."""

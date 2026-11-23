@@ -16,7 +16,7 @@ with workflow.unsafe.imports_passed_through():
 @workflow.defn
 class NepseFloorSheetEodSweepWorkflow:
     """After the close (every Sun-Fri, see register_schedules.py): read the whole
-    session's floor sheet page by page and upsert it, so nepse_floorsheet
+    session's floor sheet page by page and upsert it, so market_trade
     ends every day complete (the 500-contracts-per-minute intraday scrape
     captured only 69-100% of contracts per day) and with broker member
     ids/names, which NEPSE publishes only after 15:00. Runs more than once

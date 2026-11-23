@@ -108,11 +108,11 @@ class FloorSheetHistory:
                 {
                     "contract_id": int(contract_id),
                     "symbol": symbol,
-                    "buyer_member_id": _int(buyer),
-                    "seller_member_id": _int(seller),
-                    "contract_quantity": _int(qty),
-                    "contract_rate": _num(rate),
-                    "contract_amount": _num(amount),
+                    "buyer_broker_code": _int(buyer),
+                    "seller_broker_code": _int(seller),
+                    "quantity": _int(qty),
+                    "price": _num(rate),
+                    "amount": _num(amount),
                 }
             )
         return total_records, total_pages, first_record, rows

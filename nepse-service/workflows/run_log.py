@@ -1,4 +1,4 @@
-"""pipeline_run_logs helper for the research/EOD workflows (each run writes
+"""pipeline_run helper for the research/EOD workflows (each run writes
 one row, surfaced on the dashboard's Logs page, same as every other
 workflow in this service). Workflow-side code: only schedules an activity."""
 from __future__ import annotations

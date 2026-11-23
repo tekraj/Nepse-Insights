@@ -1,0 +1,33 @@
+# Dependencies of the api-service container. The Dockerfile installs
+# nepse-common first, then `pip install`s this file, which pulls in the
+# dependencies below; "nepse-common" is satisfied by that first install.
+#
+# The service's code is not installed as a package: uvicorn runs it from its
+# directory (`uvicorn main:app`), so this project ships no modules.
+#
+# The root pyproject.toml (development venv) repeats these pins -- when you
+# change them here, change them there too.
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "api-service"
+version = "0.1.0"
+description = "FastAPI backend of the NEPSE dashboard: reads Postgres and starts news backfills through Temporal."
+requires-python = ">=3.14"
+dependencies = [
+    "nepse-common",
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.6",
+    "pyjwt==2.9.0",
+    "temporalio",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.uv.sources]
+# Only for a stand-alone `uv sync` in this directory; pip (Docker) ignores it.
+nepse-common = { path = "../nepse-common", editable = true }

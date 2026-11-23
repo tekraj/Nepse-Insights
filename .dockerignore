@@ -4,3 +4,6 @@ dashboard/node_modules
 .git
 .gitignore
 logs
+**/.venv
+**/venv
+**/*.egg-info

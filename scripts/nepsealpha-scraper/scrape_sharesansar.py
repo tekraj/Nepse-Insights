@@ -25,10 +25,11 @@ recordsTotal=0/empty data, every single time, which looks exactly like
 rate-limiting or flakiness until you compare against a request using a
 valid page size side-by-side. This script uses length=50.
 
-Usage:
-    python3 -m venv venv
-    ./venv/bin/pip install -r requirements.txt
-    ./venv/bin/python scrape_sharesansar.py
+Usage (project venv from the root pyproject.toml):
+    uv sync                      # once, from the repo root
+    source .venv/bin/activate
+    cd scripts/nepsealpha-scraper
+    python scrape_sharesansar.py
 """
 from __future__ import annotations
 
@@ -86,7 +87,7 @@ class ScrapeJob:
 # nepse-service/scraper/historical_nepse_loader.py's _SYMBOL_TO_INDEX_NAME
 # (moved here from scraper-service/news-service when the NEPSE-specific
 # scraping code was split into its own service) so the existing seeding
-# pipeline maps them to the same nepse_index rows.
+# pipeline maps them to the same market_index_snapshot rows.
 JOBS: list[ScrapeJob] = [
     # Mid-history gap: CSV coverage ends ~2026-01-14, live scraping starts 2026-06-29.
     ScrapeJob("BANKING", 1, "2026-01-14", "2026-06-29"),

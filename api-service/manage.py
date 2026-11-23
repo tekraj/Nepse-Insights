@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
-from nepse_common.models import AdminUser
+from nepse_common.models import AppUser
 from nepse_common.security import hash_password
 
 
@@ -24,7 +24,7 @@ def create_admin(email: str, password: str, display_name: str | None) -> int:
     config = load_app_config()
     with session_scope(config.database) as db:
         existing = db.execute(
-            select(AdminUser).where(AdminUser.email == normalized_email)
+            select(AppUser).where(AppUser.email == normalized_email)
         ).scalar_one_or_none()
 
         if existing is not None:
@@ -34,7 +34,7 @@ def create_admin(email: str, password: str, display_name: str | None) -> int:
             print(f"Updated existing admin user: {normalized_email}")
         else:
             db.add(
-                AdminUser(
+                AppUser(
                     email=normalized_email,
                     password_hash=hash_password(password),
                     display_name=display_name,

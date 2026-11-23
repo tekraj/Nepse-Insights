@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export `nepse_news` table `body` column to local files under data/nepse_news/{id}.txt
+"""Export `news_article` table `body` column to local files under data/nepse_news/{id}.txt
 
 Usage:
     python scripts/export_nepse_news_to_files.py
@@ -66,7 +66,7 @@ def main():
     offset = 0
     while True:
         cur.execute(
-            "SELECT id, body FROM nepse_news ORDER BY id LIMIT %s OFFSET %s",
+            "SELECT id, body FROM news_article ORDER BY id LIMIT %s OFFSET %s",
             (batch_size, offset),
         )
         rows = cur.fetchall()

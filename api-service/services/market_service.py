@@ -1,6 +1,7 @@
-"""Official index history (nepse_index_daily + the research_index_drawdown
-view), intraday index paths (live nepse_index ticks, older sessions from
-nepse_intraday_tick) and order-book snapshots (nepse_market_depth)."""
+"""Official index history (market_index_daily + the market_index_drawdown
+view), intraday index paths (live market_index_snapshot rows, older sessions
+from market_intraday_tick) and order-book snapshots
+(market_order_book_snapshot)."""
 from __future__ import annotations
 
 import math
@@ -91,7 +92,7 @@ class MarketService:
                            row_number() OVER (PARTITION BY index_name ORDER BY trade_date DESC) AS rn,
                            count(*) OVER (PARTITION BY index_name) AS sessions,
                            min(trade_date) OVER (PARTITION BY index_name) AS first_date
-                    FROM nepse_index_daily
+                    FROM market_index_daily
                 )
                 SELECT l.index_name, l.first_date, l.trade_date AS last_date, l.sessions,
                        l.close, p.close AS prev_close
@@ -106,8 +107,8 @@ class MarketService:
             for r in self._db.execute(
                 text(
                     """
-                    SELECT DISTINCT ON (index_name) index_name, value, scraped_at
-                    FROM nepse_index
+                    SELECT DISTINCT ON (index_name) index_name, index_value, scraped_at
+                    FROM market_index_snapshot
                     WHERE scraped_at >= now() - interval '4 days'
                     ORDER BY index_name, scraped_at DESC
                     """
@@ -118,8 +119,8 @@ class MarketService:
         out = []
         for r in daily:
             tick = live.get(r.index_name)
-            if tick is not None and tick.value and tick.scraped_at.date() > r.last_date:
-                value, prev, as_of, is_live = tick.value, r.close, to_iso(tick.scraped_at), True
+            if tick is not None and tick.index_value and tick.scraped_at.date() > r.last_date:
+                value, prev, as_of, is_live = tick.index_value, r.close, to_iso(tick.scraped_at), True
             else:
                 value, prev, as_of, is_live = r.close, r.prev_close, r.last_date.isoformat(), False
             change = value - prev if value is not None and prev is not None else None
@@ -149,9 +150,9 @@ class MarketService:
             text(
                 """
                 SELECT d.trade_date, d.open, d.high, d.low, d.close, d.turnover, d.volume,
-                       d.total_transactions, d.source, v.log_return, v.running_peak, v.drawdown
-                FROM nepse_index_daily d
-                JOIN research_index_drawdown v
+                       d.trade_count, d.source, v.log_return, v.running_peak, v.drawdown
+                FROM market_index_daily d
+                JOIN market_index_drawdown v
                   ON v.index_name = d.index_name AND v.trade_date = d.trade_date
                 WHERE d.index_name = :name
                 ORDER BY d.trade_date
@@ -180,7 +181,7 @@ class MarketService:
                     "close": _num(r.close),
                     "turnover": _num(r.turnover),
                     "volume": _num(r.volume),
-                    "transactions": r.total_transactions,
+                    "transactions": r.trade_count,
                     "source": r.source,
                     "log_return_pct": r.log_return * 100.0 if r.log_return is not None else None,
                     "drawdown_pct": r.drawdown * 100.0 if r.drawdown is not None else None,
@@ -208,8 +209,8 @@ class MarketService:
             text(
                 """
                 SELECT
-                  (SELECT max(trade_date) FROM nepse_index_daily WHERE index_name = 'NEPSE' AND trade_date < :d),
-                  (SELECT min(trade_date) FROM nepse_index_daily WHERE index_name = 'NEPSE' AND trade_date > :d)
+                  (SELECT max(trade_date) FROM market_index_daily WHERE index_name = 'NEPSE' AND trade_date < :d),
+                  (SELECT min(trade_date) FROM market_index_daily WHERE index_name = 'NEPSE' AND trade_date > :d)
                 """
             ),
             {"d": day},
@@ -218,16 +219,16 @@ class MarketService:
 
     def index_intraday(self, index_name: str, day: date | None) -> dict[str, Any]:
         """One session's intraday path of an index: the live 1-minute
-        official ticks (nepse_index, since 2026-09) when that session was
-        scraped live, otherwise merolagani's ticks (nepse_intraday_tick, back
+        official ticks (market_index_snapshot, since 2026-09) when that session was
+        scraped live, otherwise merolagani's ticks (market_intraday_tick, back
         to 2018). Defaults to the latest session with any ticks."""
         if day is None:
             latest = self._db.execute(
                 text(
                     """
                     SELECT greatest(
-                      (SELECT max(scraped_at)::date FROM nepse_index WHERE index_name = :name),
-                      (SELECT max(tick_time)::date FROM nepse_intraday_tick WHERE symbol = :name))
+                      (SELECT max(scraped_at)::date FROM market_index_snapshot WHERE index_name = :name),
+                      (SELECT max(tick_time)::date FROM market_intraday_tick WHERE symbol = :name))
                     """
                 ),
                 {"name": index_name},
@@ -239,8 +240,8 @@ class MarketService:
         rows = self._db.execute(
             text(
                 """
-                SELECT scraped_at AS ts, value FROM nepse_index
-                WHERE index_name = :name AND scraped_at >= :start AND scraped_at < :end AND value > 0
+                SELECT scraped_at AS ts, index_value AS value FROM market_index_snapshot
+                WHERE index_name = :name AND scraped_at >= :start AND scraped_at < :end AND index_value > 0
                 ORDER BY scraped_at
                 """
             ),
@@ -251,7 +252,7 @@ class MarketService:
             rows = self._db.execute(
                 text(
                     """
-                    SELECT tick_time AS ts, price AS value FROM nepse_intraday_tick
+                    SELECT tick_time AS ts, price AS value FROM market_intraday_tick
                     WHERE symbol = :name AND tick_time >= :start AND tick_time < :end AND price > 0
                     ORDER BY tick_time
                     """
@@ -264,11 +265,11 @@ class MarketService:
             text(
                 """
                 SELECT open, high, low, close, turnover,
-                       (SELECT close FROM nepse_index_daily p
+                       (SELECT close FROM market_index_daily p
                         WHERE p.index_name = :name AND p.trade_date < :d
                         ORDER BY p.trade_date DESC LIMIT 1) AS prev_close
                 FROM (SELECT 1) one
-                LEFT JOIN nepse_index_daily d ON d.index_name = :name AND d.trade_date = :d
+                LEFT JOIN market_index_daily d ON d.index_name = :name AND d.trade_date = :d
                 """
             ),
             {"name": index_name, "d": day},
@@ -295,7 +296,7 @@ class MarketService:
 
     def depth_symbols(self) -> dict[str, Any]:
         """Symbols with order-book snapshots on the latest depth day."""
-        latest = self._db.execute(text("SELECT max(scraped_at) FROM nepse_market_depth")).scalar()
+        latest = self._db.execute(text("SELECT max(scraped_at) FROM market_order_book_snapshot")).scalar()
         if latest is None:
             return {"date": None, "symbols": []}
         start = datetime.combine(latest.date(), datetime.min.time())
@@ -303,7 +304,7 @@ class MarketService:
             text(
                 """
                 SELECT symbol, count(*) AS snapshots, max(scraped_at) AS last_at
-                FROM nepse_market_depth
+                FROM market_order_book_snapshot
                 WHERE scraped_at >= :start
                 GROUP BY symbol ORDER BY symbol
                 """
@@ -324,7 +325,7 @@ class MarketService:
         from the per-minute today-price snapshots."""
         if day is None:
             latest = self._db.execute(
-                text("SELECT max(scraped_at) FROM nepse_market_depth WHERE symbol = :s"), {"s": symbol}
+                text("SELECT max(scraped_at) FROM market_order_book_snapshot WHERE symbol = :s"), {"s": symbol}
             ).scalar()
             day = latest.date() if latest else date.today()
         start = datetime.combine(day, datetime.min.time())
@@ -332,8 +333,8 @@ class MarketService:
         rows = self._db.execute(
             text(
                 """
-                SELECT scraped_at, total_buy_qty, total_sell_qty, buy_levels, sell_levels
-                FROM nepse_market_depth
+                SELECT scraped_at, total_buy_quantity, total_sell_quantity, buy_levels, sell_levels
+                FROM market_order_book_snapshot
                 WHERE symbol = :s AND scraped_at >= :start AND scraped_at < :end
                 ORDER BY scraped_at
                 """
@@ -360,8 +361,8 @@ class MarketService:
             best_bid = bids[0]["price"] if bids else None
             best_ask = asks[0]["price"] if asks else None
             mid = (best_bid + best_ask) / 2 if best_bid and best_ask else None
-            buy_total = r.total_buy_qty or 0
-            sell_total = r.total_sell_qty or 0
+            buy_total = r.total_buy_quantity or 0
+            sell_total = r.total_sell_quantity or 0
             series.append(
                 {
                     "t": to_iso(r.scraped_at),
@@ -382,9 +383,9 @@ class MarketService:
         trades = self._db.execute(
             text(
                 """
-                SELECT scraped_at, ltp FROM nepse_today_price
+                SELECT scraped_at, last_traded_price FROM market_price_snapshot
                 WHERE symbol = :s AND scraped_at >= :start AND scraped_at < :end
-                  AND business_date = :d AND ltp IS NOT NULL
+                  AND trade_date = :d AND last_traded_price IS NOT NULL
                 ORDER BY scraped_at
                 """
             ),
@@ -395,5 +396,5 @@ class MarketService:
             "date": day.isoformat(),
             "series": series,
             "latest": latest_book,
-            "ltp": [{"t": to_iso(r.scraped_at), "ltp": float(r.ltp)} for r in trades],
+            "ltp": [{"t": to_iso(r.scraped_at), "ltp": float(r.last_traded_price)} for r in trades],
         }

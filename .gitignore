@@ -10,3 +10,8 @@ node_modules/
 data/
 .latex-build/
 .venv311/
+
+# Python packaging output (setuptools writes these when installing nepse-common
+# or a service project; the dev venv is .venv/ -- see pyproject.toml)
+*.egg-info/
+build/

@@ -41,10 +41,10 @@ def _symbol_to_index_name(symbol: str) -> str:
 
 
 def parse_historical_nepse_csvs(data_dir: str) -> list[dict[str, Any]]:
-    """Read all CSV files under data_dir and map them to nepse_index rows.
+    """Read all CSV files under data_dir and map them to market_index_snapshot rows.
 
     Each row also carries the full daily bar (trade_date, open, high, low,
-    close, turnover) for nepse_index_daily. The exports' "Volume" column is
+    close, turnover) for market_index_daily. The exports' "Volume" column is
     the index's NPR traded value (e.g. NEPSE ~6.4e9 in Jan 2021), so it is
     mapped to turnover; their "Turn Over" column is always "-"."""
     root = Path(data_dir)

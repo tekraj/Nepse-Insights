@@ -1,0 +1,34 @@
+# Dependencies of the nepse-service container. The Dockerfile installs
+# nepse-common first, then `pip install`s this file, which pulls in the
+# dependencies below; "nepse-common" is satisfied by that first install.
+#
+# The service's code is not installed as a package: the worker runs from its
+# directory (`python worker.py`), so this project ships no modules.
+#
+# The root pyproject.toml (development venv) repeats these pins -- when you
+# change them here, change them there too.
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nepse-service"
+version = "0.1.0"
+description = "Temporal worker that collects NEPSE market data: live scrapes, end-of-day bars, floor sheets and research backfills."
+requires-python = ">=3.14"
+dependencies = [
+    "nepse-common",
+    "temporalio",
+    "requests==2.32.3",
+    "beautifulsoup4==4.12.3",
+    "pytz==2024.1",
+    "wasmtime==27.0.2",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.uv.sources]
+# Only for a stand-alone `uv sync` in this directory; pip (Docker) ignores it.
+nepse-common = { path = "../nepse-common", editable = true }

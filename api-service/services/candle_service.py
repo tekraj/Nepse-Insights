@@ -2,14 +2,14 @@
 monthly timeframes.
 
 Sources:
-  * 1m..1h   -- nepse_intraday_tick (indices ~1 tick/min, stocks every
+  * 1m..1h   -- market_intraday_tick (indices ~1 tick/min, stocks every
                print, both from 2018-03-29), bucketed here. Sessions it
                lacks (today until the 15:40 end-of-day job; stocks the
                per-stock backfill hasn't reached) come from the live
-               1-minute scrapes since 2026-09-15: nepse_index (index
-               values, no volume) and nepse_today_price (LTP + cumulative
-               quantity per stock).
-  * 1d/1w/1M -- nepse_index_daily / nepse_stock_daily, plus a provisional
+               1-minute scrapes since 2026-09-15: market_index_snapshot
+               (index values, no volume) and market_price_snapshot (last
+               traded price + cumulative volume per stock).
+  * 1d/1w/1M -- market_index_daily / market_stock_daily, plus a provisional
                bar for today from the live scrapes while the session runs.
 
 Bar timestamps are epoch milliseconds of the bucket start in NPT (the
@@ -33,7 +33,7 @@ _TICKS_PER_SESSION = 240
 # carries the whole day's turnover as its volume and the pre-close value as
 # its price (the official close is the 15:00:00 tick): dropped.
 _CLOSE_SUMMARY_FROM = dtime(15, 0)
-# Start of the 1-minute live scrapes (nepse_index / nepse_today_price).
+# Start of the 1-minute live scrapes (market_index_snapshot / market_price_snapshot).
 _LIVE_SINCE = datetime(2026, 9, 15)
 
 
@@ -98,7 +98,7 @@ class CandleService:
         days the weekly refresh hasn't adjusted yet carrying the nearest
         known factor. None when merolagani has no adjusted history."""
         rows = self._db.execute(
-            text("SELECT trade_date, close, adj_close FROM nepse_stock_daily WHERE symbol = :s ORDER BY trade_date"),
+            text("SELECT trade_date, close, adj_close FROM market_stock_daily WHERE symbol = :s ORDER BY trade_date"),
             {"s": symbol},
         ).all()
         raw = [(r.trade_date, r.adj_close / r.close if r.adj_close and r.close else None) for r in rows]
@@ -132,7 +132,7 @@ class CandleService:
             # Nothing in the latest sessions (a delisted stock): jump to
             # where its ticks end instead of returning an empty page.
             last = self._db.execute(
-                text("SELECT max(tick_time) FROM nepse_intraday_tick WHERE symbol = :s AND tick_time < :end"),
+                text("SELECT max(tick_time) FROM market_intraday_tick WHERE symbol = :s AND tick_time < :end"),
                 {"s": symbol, "end": end},
             ).scalar()
             if last is not None:
@@ -169,7 +169,7 @@ class CandleService:
         days = self._db.execute(
             text(
                 """
-                SELECT trade_date FROM nepse_index_daily
+                SELECT trade_date FROM market_index_daily
                 WHERE index_name = 'NEPSE' AND trade_date <= :end ORDER BY trade_date DESC LIMIT :n
                 """
             ),
@@ -181,7 +181,7 @@ class CandleService:
             for r in self._db.execute(
                 text(
                     """
-                    SELECT tick_time, price, volume FROM nepse_intraday_tick
+                    SELECT tick_time, price, volume FROM market_intraday_tick
                     WHERE symbol = :s AND tick_time >= :start AND tick_time < :end ORDER BY tick_time
                     """
                 ),
@@ -198,7 +198,7 @@ class CandleService:
 
     def _has_older(self, kind: str, symbol: str, start: datetime) -> bool:
         if self._db.execute(
-            text("SELECT 1 FROM nepse_intraday_tick WHERE symbol = :s AND tick_time < :start LIMIT 1"),
+            text("SELECT 1 FROM market_intraday_tick WHERE symbol = :s AND tick_time < :start LIMIT 1"),
             {"s": symbol, "start": start},
         ).first():
             return True
@@ -207,8 +207,8 @@ class CandleService:
                 self._db.execute(
                     text(
                         """
-                        SELECT 1 FROM nepse_today_price
-                        WHERE symbol = :s AND scraped_at < :start AND scraped_at >= :live AND ltp IS NOT NULL LIMIT 1
+                        SELECT 1 FROM market_price_snapshot
+                        WHERE symbol = :s AND scraped_at < :start AND scraped_at >= :live AND last_traded_price IS NOT NULL LIMIT 1
                         """
                     ),
                     {"s": symbol, "start": start, "live": _LIVE_SINCE},
@@ -231,24 +231,24 @@ class CandleService:
         self, kind: str, symbol: str, start: datetime, end: datetime, covered: set[date]
     ) -> list[tuple[datetime, float, float | None]]:
         """Ticks from the 1-minute live scrapes for the days in [start, end)
-        that nepse_intraday_tick doesn't cover."""
+        that market_intraday_tick doesn't cover."""
         if kind == "index":
             rows = self._db.execute(
                 text(
                     """
-                    SELECT scraped_at, value FROM nepse_index
-                    WHERE index_name = :s AND scraped_at >= :start AND scraped_at < :end AND value IS NOT NULL
+                    SELECT scraped_at, index_value FROM market_index_snapshot
+                    WHERE index_name = :s AND scraped_at >= :start AND scraped_at < :end AND index_value IS NOT NULL
                     ORDER BY scraped_at
                     """
                 ),
                 {"s": symbol, "start": start, "end": end},
             ).all()
-            return [(r.scraped_at, r.value, None) for r in rows if r.scraped_at.date() not in covered]
+            return [(r.scraped_at, r.index_value, None) for r in rows if r.scraped_at.date() not in covered]
         rows = self._db.execute(
             text(
                 """
-                SELECT scraped_at, ltp, total_trade_quantity FROM nepse_today_price
-                WHERE symbol = :s AND scraped_at >= :start AND scraped_at < :end AND ltp IS NOT NULL
+                SELECT scraped_at, last_traded_price, volume FROM market_price_snapshot
+                WHERE symbol = :s AND scraped_at >= :start AND scraped_at < :end AND last_traded_price IS NOT NULL
                 ORDER BY scraped_at
                 """
             ),
@@ -261,8 +261,8 @@ class CandleService:
                 continue
             if r.scraped_at.date() != day:
                 day, prev_qty = r.scraped_at.date(), 0
-            qty = r.total_trade_quantity or 0
-            out.append((r.scraped_at, r.ltp, max(qty - prev_qty, 0)))
+            qty = r.volume or 0
+            out.append((r.scraped_at, r.last_traded_price, max(qty - prev_qty, 0)))
             prev_qty = max(qty, prev_qty)
         return out
 
@@ -273,12 +273,12 @@ class CandleService:
     ) -> tuple[list[dict[str, Any]], bool]:
         if kind == "index":
             sql = """
-                SELECT trade_date, open, high, low, close, turnover AS volume FROM nepse_index_daily
+                SELECT trade_date, open, high, low, close, turnover AS volume FROM market_index_daily
                 WHERE index_name = :s AND close IS NOT NULL ORDER BY trade_date
             """
         else:
             sql = """
-                SELECT trade_date, open, high, low, close, volume FROM nepse_stock_daily
+                SELECT trade_date, open, high, low, close, volume FROM market_stock_daily
                 WHERE symbol = :s AND close IS NOT NULL ORDER BY trade_date
             """
         days: list[list[Any]] = []
@@ -323,9 +323,9 @@ class CandleService:
             row = self._db.execute(
                 text(
                     """
-                    SELECT (array_agg(value ORDER BY scraped_at))[1] AS o, max(value) AS h, min(value) AS l,
-                           (array_agg(value ORDER BY scraped_at DESC))[1] AS c
-                    FROM nepse_index WHERE index_name = :s AND scraped_at >= :today AND value IS NOT NULL
+                    SELECT (array_agg(index_value ORDER BY scraped_at))[1] AS o, max(index_value) AS h,
+                           min(index_value) AS l, (array_agg(index_value ORDER BY scraped_at DESC))[1] AS c
+                    FROM market_index_snapshot WHERE index_name = :s AND scraped_at >= :today AND index_value IS NOT NULL
                     """
                 ),
                 {"s": symbol, "today": today},
@@ -336,8 +336,8 @@ class CandleService:
         row = self._db.execute(
             text(
                 """
-                SELECT open_price, high_price, low_price, ltp, total_trade_quantity FROM nepse_today_price
-                WHERE symbol = :s AND business_date = :today AND ltp IS NOT NULL ORDER BY scraped_at DESC LIMIT 1
+                SELECT open, high, low, last_traded_price, volume FROM market_price_snapshot
+                WHERE symbol = :s AND trade_date = :today AND last_traded_price IS NOT NULL ORDER BY scraped_at DESC LIMIT 1
                 """
             ),
             {"s": symbol, "today": today.isoformat()},
@@ -345,5 +345,7 @@ class CandleService:
         if row is None:
             return None
         f = self._factor(factors, today) if factors else 1.0
-        o, h, l, c = (round((x or row.ltp) * f, 2) for x in (row.open_price, row.high_price, row.low_price, row.ltp))
-        return [today, o, h, l, c, row.total_trade_quantity or 0]
+        o, h, l, c = (
+            round((x or row.last_traded_price) * f, 2) for x in (row.open, row.high, row.low, row.last_traded_price)
+        )
+        return [today, o, h, l, c, row.volume or 0]

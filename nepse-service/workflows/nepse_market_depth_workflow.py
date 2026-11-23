@@ -23,7 +23,7 @@ _DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 @workflow.defn
 class NepseMarketDepthScrapeWorkflow:
     """Scrapes the bid/ask market-depth ladder for a bounded batch of
-    securities per tick and writes to nepse_market_depth. Gated to market
+    securities per tick and writes to market_order_book_snapshot. Gated to market
     hours (see NepseTodayPriceScrapeWorkflow for the rationale).
 
     Market depth is one request PER SECURITY, so each 1-minute tick takes

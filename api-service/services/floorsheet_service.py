@@ -71,16 +71,16 @@ class FloorSheetService:
             text(
                 """
                 SELECT DISTINCT ON (id) id, name FROM (
-                    SELECT buyer_member_id AS id, buyer_broker_name AS name, business_date
-                    FROM nepse_floorsheet
-                    WHERE business_date >= :since AND buyer_broker_name IS NOT NULL
+                    SELECT buyer_broker_code AS id, buyer_broker_name AS name, trade_date
+                    FROM market_trade
+                    WHERE trade_date >= :since AND buyer_broker_name IS NOT NULL
                     UNION ALL
-                    SELECT seller_member_id, seller_broker_name, business_date
-                    FROM nepse_floorsheet
-                    WHERE business_date >= :since AND seller_broker_name IS NOT NULL
+                    SELECT seller_broker_code, seller_broker_name, trade_date
+                    FROM market_trade
+                    WHERE trade_date >= :since AND seller_broker_name IS NOT NULL
                 ) s
                 WHERE id IS NOT NULL
-                ORDER BY id, business_date DESC
+                ORDER BY id, trade_date DESC
                 """
             ),
             {"since": since},
@@ -88,13 +88,13 @@ class FloorSheetService:
         names = {int(r.id): r.name for r in rows}
         # NEPSE's official member list covers brokers that haven't traded
         # lately too (e.g. suspended ones in old sessions).
-        names.update({int(r.member_code): r.member_name for r in self._db.execute(text("SELECT member_code, member_name FROM nepse_broker")).all()})
+        names.update({int(r.broker_code): r.broker_name for r in self._db.execute(text("SELECT broker_code, broker_name FROM market_broker")).all()})
         _name_cache = (now, names)
         return names
 
     def sessions(self) -> dict[str, Any]:
         latest, first = self._db.execute(
-            text("SELECT max(business_date), min(business_date) FROM nepse_floorsheet")
+            text("SELECT max(trade_date), min(trade_date) FROM market_trade")
         ).one()
         return {"latest": latest, "first": first}
 
@@ -103,8 +103,8 @@ class FloorSheetService:
             text(
                 """
                 SELECT
-                  (SELECT max(trade_date) FROM nepse_index_daily WHERE index_name = 'NEPSE' AND trade_date < CAST(:d AS date)),
-                  (SELECT min(trade_date) FROM nepse_index_daily WHERE index_name = 'NEPSE' AND trade_date > CAST(:d AS date))
+                  (SELECT max(trade_date) FROM market_index_daily WHERE index_name = 'NEPSE' AND trade_date < CAST(:d AS date)),
+                  (SELECT min(trade_date) FROM market_index_daily WHERE index_name = 'NEPSE' AND trade_date > CAST(:d AS date))
                 """
             ),
             {"d": day},
@@ -120,16 +120,16 @@ class FloorSheetService:
         if not day:
             return {"date": None, "symbol": symbol, "totals": None, "brokers": [], "symbols": [], "minutes": [], "sizes": []}
 
-        where = "business_date = :d" + (" AND symbol = :s" if symbol else "")
+        where = "trade_date = :d" + (" AND symbol = :s" if symbol else "")
         params = {"d": day, "s": symbol}
 
         totals = self._db.execute(
             text(
                 f"""
-                SELECT count(*) AS trades, sum(contract_amount) AS amount, sum(contract_quantity) AS quantity,
-                       count(buyer_member_id) AS with_broker, count(trade_time) AS with_time,
+                SELECT count(*) AS trades, sum(amount) AS amount, sum(quantity) AS quantity,
+                       count(buyer_broker_code) AS with_broker, count(trade_time) AS with_time,
                        count(DISTINCT symbol) AS symbols
-                FROM nepse_floorsheet WHERE {where}
+                FROM market_trade WHERE {where}
                 """
             ),
             params,
@@ -139,13 +139,13 @@ class FloorSheetService:
             text(
                 f"""
                 WITH b AS (
-                    SELECT buyer_member_id AS id, sum(contract_amount) AS amount,
-                           sum(contract_quantity) AS quantity, count(*) AS trades
-                    FROM nepse_floorsheet WHERE {where} AND buyer_member_id IS NOT NULL GROUP BY 1
+                    SELECT buyer_broker_code AS id, sum(amount) AS amount,
+                           sum(quantity) AS quantity, count(*) AS trades
+                    FROM market_trade WHERE {where} AND buyer_broker_code IS NOT NULL GROUP BY 1
                 ), s AS (
-                    SELECT seller_member_id AS id, sum(contract_amount) AS amount,
-                           sum(contract_quantity) AS quantity, count(*) AS trades
-                    FROM nepse_floorsheet WHERE {where} AND seller_member_id IS NOT NULL GROUP BY 1
+                    SELECT seller_broker_code AS id, sum(amount) AS amount,
+                           sum(quantity) AS quantity, count(*) AS trades
+                    FROM market_trade WHERE {where} AND seller_broker_code IS NOT NULL GROUP BY 1
                 )
                 SELECT coalesce(b.id, s.id) AS id,
                        coalesce(b.amount, 0) AS buy_amount, coalesce(s.amount, 0) AS sell_amount,
@@ -188,10 +188,10 @@ class FloorSheetService:
                 for r in self._db.execute(
                     text(
                         """
-                        SELECT symbol, count(*) AS trades, sum(contract_amount) AS amount,
-                               sum(contract_quantity) AS quantity
-                        FROM nepse_floorsheet WHERE business_date = :d
-                        GROUP BY symbol ORDER BY sum(contract_amount) DESC NULLS LAST LIMIT 15
+                        SELECT symbol, count(*) AS trades, sum(amount) AS amount,
+                               sum(quantity) AS quantity
+                        FROM market_trade WHERE trade_date = :d
+                        GROUP BY symbol ORDER BY sum(amount) DESC NULLS LAST LIMIT 15
                         """
                     ),
                     {"d": day},
@@ -211,9 +211,9 @@ class FloorSheetService:
                     text(
                         f"""
                         SELECT date_trunc('minute', CAST(trade_time AS timestamp)) AS minute,
-                               count(*) AS trades, sum(contract_amount) AS amount,
-                               sum(contract_quantity) AS quantity
-                        FROM nepse_floorsheet WHERE {where} AND trade_time IS NOT NULL
+                               count(*) AS trades, sum(amount) AS amount,
+                               sum(quantity) AS quantity
+                        FROM market_trade WHERE {where} AND trade_time IS NOT NULL
                         GROUP BY 1 ORDER BY 1
                         """
                     ),
@@ -222,15 +222,15 @@ class FloorSheetService:
             ]
 
         bucket_case = "CASE " + " ".join(
-            f"WHEN contract_amount < {bound} THEN {i}" for i, (_, bound) in enumerate(_SIZE_BUCKETS) if bound
+            f"WHEN amount < {bound} THEN {i}" for i, (_, bound) in enumerate(_SIZE_BUCKETS) if bound
         ) + f" ELSE {len(_SIZE_BUCKETS) - 1} END"
         size_rows = {
             int(r.bucket): r
             for r in self._db.execute(
                 text(
                     f"""
-                    SELECT {bucket_case} AS bucket, count(*) AS trades, sum(contract_amount) AS amount
-                    FROM nepse_floorsheet WHERE {where} AND contract_amount IS NOT NULL GROUP BY 1
+                    SELECT {bucket_case} AS bucket, count(*) AS trades, sum(amount) AS amount
+                    FROM market_trade WHERE {where} AND amount IS NOT NULL GROUP BY 1
                     """
                 ),
                 params,
@@ -286,13 +286,13 @@ class FloorSheetService:
         side's Herfindahl index and the share of trades with broker ids.
         Sessions whose broker ids aren't backfilled yet show null shares."""
         sessions = max(5, min(sessions, _MAX_CONCENTRATION_SESSIONS))
-        # From the trading calendar: a DISTINCT over the floor sheet's
-        # business_date would walk its whole index.
+        # From the trading calendar: a DISTINCT over market_trade's
+        # trade_date would walk its whole index.
         start = self._db.execute(
             text(
                 """
                 SELECT min(trade_date) FROM (
-                    SELECT trade_date FROM nepse_index_daily WHERE index_name = 'NEPSE'
+                    SELECT trade_date FROM market_index_daily WHERE index_name = 'NEPSE'
                     ORDER BY trade_date DESC LIMIT :n) d
                 """
             ),
@@ -306,9 +306,9 @@ class FloorSheetService:
         day_rows = self._db.execute(
             text(
                 f"""
-                SELECT business_date, count(*) AS trades, sum(contract_amount) AS amount,
-                       count(buyer_member_id) AS with_broker
-                FROM nepse_floorsheet WHERE business_date >= :start{sym}
+                SELECT trade_date, count(*) AS trades, sum(amount) AS amount,
+                       count(buyer_broker_code) AS with_broker
+                FROM market_trade WHERE trade_date >= :start{sym}
                 GROUP BY 1 ORDER BY 1
                 """
             ),
@@ -317,12 +317,12 @@ class FloorSheetService:
         side_rows = self._db.execute(
             text(
                 f"""
-                SELECT business_date, 'buy' AS side, buyer_member_id AS id, sum(contract_amount) AS amount
-                FROM nepse_floorsheet WHERE business_date >= :start{sym} AND buyer_member_id IS NOT NULL
+                SELECT trade_date, 'buy' AS side, buyer_broker_code AS id, sum(amount) AS amount
+                FROM market_trade WHERE trade_date >= :start{sym} AND buyer_broker_code IS NOT NULL
                 GROUP BY 1, 3
                 UNION ALL
-                SELECT business_date, 'sell', seller_member_id, sum(contract_amount)
-                FROM nepse_floorsheet WHERE business_date >= :start{sym} AND seller_member_id IS NOT NULL
+                SELECT trade_date, 'sell', seller_broker_code, sum(amount)
+                FROM market_trade WHERE trade_date >= :start{sym} AND seller_broker_code IS NOT NULL
                 GROUP BY 1, 3
                 """
             ),
@@ -330,16 +330,16 @@ class FloorSheetService:
         ).all()
         by_day: dict[tuple[str, str], list[float]] = {}
         for r in side_rows:
-            by_day.setdefault((r.business_date, r.side), []).append(float(r.amount or 0))
+            by_day.setdefault((r.trade_date, r.side), []).append(float(r.amount or 0))
 
         points = []
         for r in day_rows:
             complete = r.trades and r.with_broker >= r.trades * _BROKER_COMPLETE_RATIO
-            buys = by_day.get((r.business_date, "buy"), [])
-            sells = by_day.get((r.business_date, "sell"), [])
+            buys = by_day.get((r.trade_date, "buy"), [])
+            sells = by_day.get((r.trade_date, "sell"), [])
             points.append(
                 {
-                    "date": r.business_date,
+                    "date": r.trade_date,
                     "trades": int(r.trades),
                     "amount": float(r.amount or 0),
                     "broker_coverage_pct": r.with_broker / r.trades * 100.0 if r.trades else None,
@@ -355,19 +355,19 @@ class FloorSheetService:
         """Per month since the first floor-sheet session: trading sessions
         in the calendar, sessions with trades, sessions with broker ids and
         trades stored, plus the history backfill's latest position. A full
-        scan of nepse_floorsheet (~5 s), so it's cached for 10 minutes."""
+        scan of market_trade (~5 s), so it's cached for 10 minutes."""
         global _coverage_cache
         now = time.monotonic()
         if _coverage_cache is not None and now - _coverage_cache[0] < _COVERAGE_CACHE_SECONDS:
             return _coverage_cache[1]
 
         stored = {
-            r.business_date: r
+            r.trade_date: r
             for r in self._db.execute(
                 text(
                     """
-                    SELECT business_date, count(*) AS trades, count(buyer_member_id) AS with_broker
-                    FROM nepse_floorsheet GROUP BY 1
+                    SELECT trade_date, count(*) AS trades, count(buyer_broker_code) AS with_broker
+                    FROM market_trade GROUP BY 1
                     """
                 )
             ).all()
@@ -379,7 +379,7 @@ class FloorSheetService:
                 for (d,) in self._db.execute(
                     text(
                         """
-                        SELECT trade_date FROM nepse_index_daily
+                        SELECT trade_date FROM market_index_daily
                         WHERE index_name = 'NEPSE' AND trade_date >= CAST(:first AS date) ORDER BY 1
                         """
                     ),
@@ -413,7 +413,7 @@ class FloorSheetService:
         backfill = self._db.execute(
             text(
                 """
-                SELECT symbol, last_run_at, rows_written FROM research_backfill_state
+                SELECT item_key, last_run_at, rows_written FROM market_backfill_state
                 WHERE dataset = 'floorsheet_history' ORDER BY last_run_at DESC NULLS LAST LIMIT 1
                 """
             )
@@ -423,7 +423,7 @@ class FloorSheetService:
             "totals": totals,
             "months": list(months.values()),
             "backfill": {
-                "last_session": backfill.symbol,
+                "last_session": backfill.item_key,
                 "last_run_at": to_iso(backfill.last_run_at),
                 "trades": int(backfill.rows_written or 0),
             }

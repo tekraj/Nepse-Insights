@@ -60,7 +60,7 @@ def _npt_aligned_offset(interval: timedelta) -> timedelta:
 
 
 # One schedule per historical-backfill portal, each on its own independent
-# interval and its own work queue (historical_backfill_urls is scoped by
+# interval and its own work queue (news_backfill_url is scoped by
 # `source`) so the portals run in parallel with each other. Throughput is
 # raised via batch_size (process several URLs per tick, each still its own
 # separately-paced request -- see _BATCH_ITEM_PAUSE_SECONDS in the
@@ -87,7 +87,7 @@ _BACKFILL_BATCH_SIZE = 15
 _BACKFILL_REAP_SCHEDULE_ID = "historical-backfill-reap-schedule"
 _BACKFILL_REAP_INTERVAL = timedelta(minutes=5)
 
-# Separate one-time cleanup pass over EXISTING nepse_news rows missing
+# Separate one-time cleanup pass over EXISTING news_article rows missing
 # published_at/body -- independent of historical_news_backfill_enabled
 # (that flag controls discovering NEW pre-2021 articles; this fixes gaps
 # in articles already in the table, live-scraped or otherwise).

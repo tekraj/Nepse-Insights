@@ -50,7 +50,7 @@ class ScraperConfig:
     # NepseEndOfDayWorkflow): long daily OHLCV history for every index and
     # equity plus 1-minute index bars, sourced from merolagani.com's chart
     # handler (the official nepalstock.com.np API only serves ~1 year).
-    # Intraday = ~1-minute index ticks (nepse_intraday_tick) back to
+    # Intraday = ~1-minute index ticks (market_intraday_tick) back to
     # intraday_backfill_start_date.
     research_backfill_enabled: bool
     research_backfill_on_startup: bool

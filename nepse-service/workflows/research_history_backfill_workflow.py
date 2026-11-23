@@ -32,21 +32,21 @@ _DAILY_REFRESH_MAX_AGE_HOURS = 6 * 24
 class ResearchHistoryBackfillWorkflow:
     """Builds (first run) and refreshes (weekly + on worker startup) the
     long-history research datasets:
-      1. nepse_security            -- security master (incl. delisted).
-      2. nepse_index_daily         -- full daily history of all 17 indices
+      1. market_security            -- security master (incl. delisted).
+      2. market_index_daily         -- full daily history of all 17 indices
                                       (merolagani, NEPSE from 2000), plus
                                       the official last ~1 year with share
                                       volume / transaction counts.
-      3. nepse_stock_daily         -- full raw + bonus/right-adjusted daily
+      3. market_stock_daily         -- full raw + bonus/right-adjusted daily
                                       history of every equity, incl.
                                       delisted ones (skipped if refreshed
                                       in the last 6 days, unless forced).
-      4. nepse_intraday_tick       -- ~1-minute ticks for all indices back to
+      4. market_intraday_tick       -- ~1-minute ticks for all indices back to
                                       INTRADAY_BACKFILL_START_DATE, plus
                                       opt-in equities (INTRADAY_BACKFILL_STOCKS;
                                       "ALL" includes equities delisted since
                                       that date). Resumable via
-                                      research_backfill_state.
+                                      market_backfill_state.
     Requests to merolagani are paced MEROLAGANI_REQUEST_PAUSE_SECONDS apart.
     One symbol failing is recorded and skipped, never fatal to the run."""
 

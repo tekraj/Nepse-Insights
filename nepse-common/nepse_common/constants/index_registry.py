@@ -2,9 +2,9 @@
 
 - official_id: nepalstock.com.np's numeric index id (/api/nots/nepse-index,
   /api/nots, /api/nots/index/history/{id}).
-- name: canonical name stored in nepse_index.index_name /
-  nepse_index_daily.index_name / nepse_intraday_tick.symbol. These match the
-  names already present in nepse_index (they are nepalstock's own names,
+- name: canonical name stored in market_index_snapshot.index_name /
+  market_index_daily.index_name / market_intraday_tick.symbol. These match the
+  names already present in market_index_snapshot (they are nepalstock's own names,
   except "NEPSE Index" which this codebase has always stored as "NEPSE").
 - merolagani_symbol: symbol accepted by merolagani.com's
   TechnicalChartHandler (its Indices.aspx dropdown labels, case-insensitive)

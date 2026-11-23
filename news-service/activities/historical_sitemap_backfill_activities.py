@@ -10,7 +10,7 @@ from temporalio import activity
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
-from nepse_common.models import HistoricalBackfillProgress, HistoricalBackfillUrl
+from nepse_common.models import NewsBackfillProgress, NewsBackfillUrl
 from nepse_common.schemas.scraped import ScrapedArticle
 
 from scraper.historical_article_extractor import extract_article
@@ -18,9 +18,9 @@ from scraper.historical_sitemap_discovery import PORTALS_BY_SOURCE, discover_por
 
 # Fixed backfill window, per the user's original ask: 2021-01-01 through
 # the last date the live pipeline had *no* coverage at all, 2026-06-29
-# (live 30-min scraping and the CSV-backed nepse_index import both start
+# (live 30-min scraping and the CSV-backed market_index_snapshot import both start
 # on/after that date). Anything discovered outside this range is marked
-# "out_of_range" and never written to nepse_news -- it's either too old to
+# "out_of_range" and never written to news_article -- it's either too old to
 # matter or already covered by the live/daily-historical pipelines. Left
 # as a fixed historical constant for karobardaily/myrepublica/sharesansar,
 # which this window was originally calibrated for.
@@ -63,7 +63,7 @@ STALE_CLAIM_TIMEOUT = timedelta(minutes=10)
 async def discover_and_enqueue_urls_activity(source: str, timeout: int) -> dict[str, int]:
     """One-shot (well, safe-to-repeat) bulk discovery step for a sitemap
     portal: walks its sitemap(s) and inserts every not-yet-seen candidate
-    URL into historical_backfill_urls as "pending". Cheap relative to the
+    URL into news_backfill_url as "pending". Cheap relative to the
     per-article fetch -- sitemap files are small XML, not full article
     pages -- so this is NOT rate limited the way per-article ticks are.
 
@@ -95,14 +95,14 @@ async def discover_and_enqueue_urls_activity(source: str, timeout: int) -> dict[
 
     with session_scope(config.database) as session:
         stmt = (
-            pg_insert(HistoricalBackfillUrl)
+            pg_insert(NewsBackfillUrl)
             .values(records)
             .on_conflict_do_update(
                 index_elements=["source", "url"],
-                set_={"discovery_rank": pg_insert(HistoricalBackfillUrl).excluded.discovery_rank},
-                where=(HistoricalBackfillUrl.status == "pending"),
+                set_={"discovery_rank": pg_insert(NewsBackfillUrl).excluded.discovery_rank},
+                where=(NewsBackfillUrl.status == "pending"),
             )
-            .returning(HistoricalBackfillUrl.id)
+            .returning(NewsBackfillUrl.id)
         )
         result = session.execute(stmt)
         # With ON CONFLICT DO UPDATE, RETURNING yields a row for both new
@@ -135,12 +135,12 @@ async def claim_next_pending_url_activity(source: str) -> dict[str, Any] | None:
 
     with session_scope(config.database) as session:
         stmt = (
-            select(HistoricalBackfillUrl)
+            select(NewsBackfillUrl)
             .where(
-                HistoricalBackfillUrl.source == source,
-                HistoricalBackfillUrl.status == "pending",
+                NewsBackfillUrl.source == source,
+                NewsBackfillUrl.status == "pending",
             )
-            .order_by(HistoricalBackfillUrl.discovery_rank.desc(), HistoricalBackfillUrl.id)
+            .order_by(NewsBackfillUrl.discovery_rank.desc(), NewsBackfillUrl.id)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -161,8 +161,8 @@ async def fetch_and_classify_url_activity(
     url_id: int, url: str, source: str, tier: str, timeout: int
 ) -> dict[str, Any]:
     """Fetches one article, classifies it by published_at against the
-    fixed backfill window, and updates its historical_backfill_urls row.
-    Returns a dict describing the outcome; does NOT write to nepse_news
+    fixed backfill window, and updates its news_backfill_url row.
+    Returns a dict describing the outcome; does NOT write to news_article
     itself (kept separate so the caller can batch/validate through the
     same ScrapedArticle path the live pipeline uses).
 
@@ -184,7 +184,7 @@ async def fetch_and_classify_url_activity(
     in_range = published_at is not None and window_start <= published_at.date() <= window_end
 
     with session_scope(config.database) as session:
-        row = session.get(HistoricalBackfillUrl, url_id)
+        row = session.get(NewsBackfillUrl, url_id)
         if row is None:
             return {"status": "missing_row", "article": None}
 
@@ -234,7 +234,7 @@ async def mark_url_failed_activity(url_id: int, error_text: str) -> None:
     config = load_app_config()
 
     with session_scope(config.database) as session:
-        row = session.get(HistoricalBackfillUrl, url_id)
+        row = session.get(NewsBackfillUrl, url_id)
         if row is None:
             return
 
@@ -245,7 +245,7 @@ async def mark_url_failed_activity(url_id: int, error_text: str) -> None:
 
 @activity.defn
 async def reap_stale_claims_activity() -> int:
-    """Resets any historical_backfill_urls row stuck in "processing" for
+    """Resets any news_backfill_url row stuck in "processing" for
     longer than STALE_CLAIM_TIMEOUT back to "pending" so it gets retried.
     Covers all sources in one pass (karobardaily, myrepublica, sharesansar
     all share this table) since this is cheap and there's no reason to
@@ -254,9 +254,9 @@ async def reap_stale_claims_activity() -> int:
     cutoff = datetime.utcnow() - STALE_CLAIM_TIMEOUT
 
     with session_scope(config.database) as session:
-        stmt = select(HistoricalBackfillUrl).where(
-            HistoricalBackfillUrl.status == "processing",
-            HistoricalBackfillUrl.claimed_at < cutoff,
+        stmt = select(NewsBackfillUrl).where(
+            NewsBackfillUrl.status == "processing",
+            NewsBackfillUrl.claimed_at < cutoff,
         )
         stale_rows = session.execute(stmt).scalars().all()
 
@@ -278,9 +278,9 @@ async def get_sitemap_backfill_progress_activity(source: str) -> dict[str, int]:
     with session_scope(config.database) as session:
         counts: dict[str, int] = {}
         for status in ("pending", "processing", "inserted", "out_of_range", "failed"):
-            stmt = select(HistoricalBackfillUrl.id).where(
-                HistoricalBackfillUrl.source == source,
-                HistoricalBackfillUrl.status == status,
+            stmt = select(NewsBackfillUrl.id).where(
+                NewsBackfillUrl.source == source,
+                NewsBackfillUrl.status == status,
             )
             counts[status] = len(session.execute(stmt).fetchall())
 
@@ -292,21 +292,21 @@ async def upsert_backfill_progress_activity(
     source: str, target_date_iso: str, found_delta: int, inserted_delta: int
 ) -> None:
     """Increments the (source, target_date) row in
-    historical_backfill_progress. Used for the coarse per-day "already
+    news_backfill_progress. Used for the coarse per-day "already
     done" summary the user asked for; the real work-tracking dedup lives in
-    historical_backfill_urls's own (source, url) uniqueness."""
+    news_backfill_url's own (source, url) uniqueness."""
     config = load_app_config()
     target_date = datetime.strptime(target_date_iso, "%Y-%m-%d").date()
 
     with session_scope(config.database) as session:
-        stmt = select(HistoricalBackfillProgress).where(
-            HistoricalBackfillProgress.source == source,
-            HistoricalBackfillProgress.target_date == target_date,
+        stmt = select(NewsBackfillProgress).where(
+            NewsBackfillProgress.source == source,
+            NewsBackfillProgress.target_date == target_date,
         )
         row = session.execute(stmt).scalars().first()
 
         if row is None:
-            row = HistoricalBackfillProgress(
+            row = NewsBackfillProgress(
                 source=source,
                 target_date=target_date,
                 articles_found=found_delta,

@@ -66,7 +66,7 @@ class HistoricalSitemapBackfillTickWorkflow:
     so each portal's tick rate is still enforced by the schedule itself,
     matching every other short-lived schedule-driven workflow already in
     this codebase. Each portal has its own schedule and its own work queue
-    (historical_backfill_urls filtered by source), so all portals tick in
+    (news_backfill_url filtered by source), so all portals tick in
     parallel with each other even though each one individually paces
     itself.
 
@@ -174,7 +174,7 @@ class HistoricalSitemapBackfillStatusWorkflow:
 
 @workflow.defn
 class HistoricalBackfillReapWorkflow:
-    """Periodically resets any historical_backfill_urls row stuck in
+    """Periodically resets any news_backfill_url row stuck in
     "processing" (claimed by a ticker that died -- container restart,
     crash -- before finishing) back to "pending" so it gets retried.
     Covers all backfill sources (karobardaily, myrepublica, sharesansar) in

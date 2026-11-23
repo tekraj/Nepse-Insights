@@ -33,7 +33,7 @@ _NO_DATA_PAUSES_PER_SESSION = 4
 
 @workflow.defn
 class FloorSheetHistoryBackfillWorkflow:
-    """Completes nepse_floorsheet for past sessions from merolagani's
+    """Completes market_trade for past sessions from merolagani's
     floor-sheet history (see scraper/merolagani_floorsheet.py): broker ids
     on every trade plus the trades the intraday scrape missed. Covers every
     NEPSE session from `start_date` (default FLOORSHEET_BACKFILL_START_DATE)

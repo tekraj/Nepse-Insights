@@ -1,6 +1,6 @@
 # Build context MUST be the repo root, e.g.:
 #   docker build -f nepse-service/Dockerfile -t nepse-service .
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # Without this, Python fully block-buffers stdout when it isn't a TTY (true
 # inside a container), so `docker logs` / `docker-compose logs` can sit
@@ -20,8 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY nepse-common /nepse-common
 RUN pip install --no-cache-dir -e /nepse-common
 
+# Then the service's own dependencies, from its pyproject.toml alone, so this
+# layer is rebuilt only when the dependencies (or nepse-common) change, not on
+# every code change. The project ships no modules (packages = []), so pip
+# installs just its dependencies; "nepse-common" is satisfied by the install
+# above. Built outside /app so no build/ or *.egg-info is left in the image.
+COPY nepse-service/pyproject.toml /tmp/nepse-service/pyproject.toml
+RUN pip install --no-cache-dir /tmp/nepse-service && rm -rf /tmp/nepse-service
+
 COPY nepse-service /app
-RUN pip install --no-cache-dir -r requirements.txt
 
 # historical-data holds the checked-in NEPSE CSV exports imported by
 # HistoricalNepseCsvImportWorkflow on startup (moved here from

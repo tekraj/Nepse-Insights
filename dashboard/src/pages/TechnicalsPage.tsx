@@ -24,8 +24,8 @@ import { AXIS, COLORS, GRID, TOOLTIP } from "../lib/chart";
 import { axisDay, formatCompact, formatDay, formatNumber, formatPct, trendColor } from "../lib/format";
 import { useApi, useLogout } from "../lib/useApi";
 
-// Calendar-day windows over the daily closes (indices: nepse_index_daily,
-// NEPSE back to 2000; stocks: nepse_stock_daily, back to 2000-2010 or
+// Calendar-day windows over the daily closes (indices: market_index_daily,
+// NEPSE back to 2000; stocks: market_stock_daily, back to 2000-2010 or
 // listing); 0 = full history. Indicators are computed over the full
 // history server-side, so even a short window starts with a warmed-up
 // SMA 200.

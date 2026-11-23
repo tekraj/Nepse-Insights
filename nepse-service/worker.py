@@ -153,7 +153,7 @@ async def main() -> None:
         # Builds the research datasets on first deploy and resumes an
         # interrupted backfill after a restart. Cheap when already up to
         # date: the per-equity refresh is skipped if done in the last 6
-        # days and intraday walks resume from research_backfill_state.
+        # days and intraday walks resume from market_backfill_state.
         try:
             await client.start_workflow(
                 ResearchHistoryBackfillWorkflow.run,

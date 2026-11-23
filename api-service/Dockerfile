@@ -1,6 +1,6 @@
 # Build context MUST be the repo root, e.g.:
 #   docker build -f api-service/Dockerfile -t api-service .
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
@@ -13,8 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY nepse-common /nepse-common
 RUN pip install --no-cache-dir -e /nepse-common
 
+# Then the service's own dependencies, from its pyproject.toml alone, so this
+# layer is rebuilt only when the dependencies (or nepse-common) change, not on
+# every code change. The project ships no modules (packages = []), so pip
+# installs just its dependencies; "nepse-common" is satisfied by the install
+# above. Built outside /app so no build/ or *.egg-info is left in the image.
+COPY api-service/pyproject.toml /tmp/api-service/pyproject.toml
+RUN pip install --no-cache-dir /tmp/api-service && rm -rf /tmp/api-service
+
 COPY api-service /app
-RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8001
 

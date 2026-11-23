@@ -4,7 +4,7 @@ intraday ticks, and the official end-of-day captures.
 
 Everything here writes through nepse_common.db.upserts, so every activity is
 idempotent and safe to retry or re-run; long walks persist their progress in
-research_backfill_state and resume from it.
+market_backfill_state and resume from it.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from nepse_common.db.upserts import (
     upsert_stock_daily_adjusted,
     upsert_stock_daily_raw,
 )
-from nepse_common.models import NepseStockDaily, ResearchBackfillState
+from nepse_common.models import MarketBackfillState, MarketStockDaily
 
 from scraper.merolagani_history import NPT, fetch_daily_bars, fetch_intraday_ticks, npt_today
 from scraper.nepse_market_data import fetch_company_list, fetch_index_history, fetch_today_price
@@ -76,23 +76,23 @@ def _completed_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _load_state(session, dataset: str, symbol: str) -> ResearchBackfillState | None:
+def _load_state(session, dataset: str, item_key: str) -> MarketBackfillState | None:
     return session.execute(
-        select(ResearchBackfillState).where(
-            ResearchBackfillState.dataset == dataset, ResearchBackfillState.symbol == symbol
+        select(MarketBackfillState).where(
+            MarketBackfillState.dataset == dataset, MarketBackfillState.item_key == item_key
         )
     ).scalar_one_or_none()
 
 
-def _save_state(dataset: str, symbol: str, **fields: Any) -> None:
+def _save_state(dataset: str, item_key: str, **fields: Any) -> None:
     config = load_app_config()
-    table = ResearchBackfillState.__table__
-    values = {"dataset": dataset, "symbol": symbol, **fields, "last_run_at": _now_npt_naive()}
+    table = MarketBackfillState.__table__
+    values = {"dataset": dataset, "item_key": item_key, **fields, "last_run_at": _now_npt_naive()}
     with session_scope(config.database) as session:
         stmt = pg_insert(table).values(values)
         stmt = stmt.on_conflict_do_update(
-            index_elements=["dataset", "symbol"],
-            set_={k: getattr(stmt.excluded, k) for k in values if k not in ("dataset", "symbol")},
+            index_elements=["dataset", "item_key"],
+            set_={k: getattr(stmt.excluded, k) for k in values if k not in ("dataset", "item_key")},
         )
         session.execute(stmt)
 
@@ -100,7 +100,7 @@ def _save_state(dataset: str, symbol: str, **fields: Any) -> None:
 @activity.defn
 async def sync_security_master_activity(timeout: int) -> list[dict[str, Any]]:
     """Upserts nepalstock's full company list (incl. suspended/delisted)
-    into nepse_security and returns the equities as [{symbol, status}] --
+    into market_security and returns the equities as [{symbol, status}] --
     the universe for the per-stock history backfills."""
     rows = await asyncio.to_thread(fetch_company_list, timeout)
     records = [
@@ -111,7 +111,7 @@ async def sync_security_master_activity(timeout: int) -> list[dict[str, Any]]:
             "company_name": r.get("companyName"),
             "sector_name": r.get("sectorName"),
             "instrument_type": r.get("instrumentType"),
-            "status": r.get("status"),
+            "listing_status": r.get("status"),
         }
         for r in rows
         if r.get("id") is not None and r.get("symbol")
@@ -124,11 +124,11 @@ async def sync_security_master_activity(timeout: int) -> list[dict[str, Any]]:
     equities: dict[str, str] = {}
     for r in records:
         if r["instrument_type"] == "Equity" and equities.get(r["symbol"]) != "A":
-            equities[r["symbol"]] = r["status"]
+            equities[r["symbol"]] = r["listing_status"]
     with session_scope(config.database) as session:
         last_trade = dict(
             session.execute(
-                select(NepseStockDaily.symbol, func.max(NepseStockDaily.trade_date)).group_by(NepseStockDaily.symbol)
+                select(MarketStockDaily.symbol, func.max(MarketStockDaily.trade_date)).group_by(MarketStockDaily.symbol)
             ).all()
         )
     activity.logger.info(f"[Research] security master: {len(records)} securities, {len(equities)} equities")
@@ -141,7 +141,7 @@ async def sync_security_master_activity(timeout: int) -> list[dict[str, Any]]:
 @activity.defn
 async def backfill_index_daily_activity(index_name: str, timeout: int) -> int:
     """Full daily history for one index from merolagani into
-    nepse_index_daily (merolagani's `v` for indices is NPR turnover)."""
+    market_index_daily (merolagani's `v` for indices is NPR turnover)."""
     spec = INDEX_BY_NAME[index_name]
     bars = _completed_bars(await asyncio.to_thread(fetch_daily_bars, spec.merolagani_symbol, False, timeout))
     rows = [
@@ -166,7 +166,7 @@ async def backfill_index_daily_activity(index_name: str, timeout: int) -> int:
 @activity.defn
 async def backfill_stock_daily_activity(symbol: str, timeout: int, pause_seconds: float) -> dict[str, int]:
     """Full raw + bonus/right-adjusted daily history for one equity from
-    merolagani into nepse_stock_daily."""
+    merolagani into market_stock_daily."""
     raw = _completed_bars(await asyncio.to_thread(fetch_daily_bars, symbol, False, timeout))
     await asyncio.sleep(pause_seconds)
     adjusted = _completed_bars(await asyncio.to_thread(fetch_daily_bars, symbol, True, timeout))
@@ -213,8 +213,8 @@ def _ticks_to_raw_prices(symbol: str, ticks: list[dict[str, Any]]) -> tuple[list
     (NABIL 2021-08-08: tick 1065.01, raw close 1494, daily adj 898.74) and
     shifts at every new corporate action. The factor is constant within a
     session, so each session's ticks are rescaled to raw NPR by
-    raw close / last tick price -- the same basis as the floor sheet,
-    nepse_today_price and the raw nepse_stock_daily columns, and one that
+    raw close / last tick price -- the same basis as market_trade,
+    market_price_snapshot and the raw market_stock_daily columns, and one that
     never changes retroactively. Volumes are already raw shares. merolagani
     answers any window with whole sessions (its range is date-granular), so
     a session's last tick is always in the batch. Sessions without a daily
@@ -229,9 +229,9 @@ def _ticks_to_raw_prices(symbol: str, ticks: list[dict[str, Any]]) -> tuple[list
     with session_scope(config.database) as session:
         closes = dict(
             session.execute(
-                select(NepseStockDaily.trade_date, NepseStockDaily.close).where(
-                    NepseStockDaily.symbol == symbol,
-                    NepseStockDaily.trade_date.in_(list(by_day)),
+                select(MarketStockDaily.trade_date, MarketStockDaily.close).where(
+                    MarketStockDaily.symbol == symbol,
+                    MarketStockDaily.trade_date.in_(list(by_day)),
                 )
             ).all()
         )
@@ -258,8 +258,8 @@ async def backfill_intraday_ticks_activity(
     pause_seconds: float,
     backward: bool,
 ) -> dict[str, Any]:
-    """Intraday ticks for one symbol from merolagani into nepse_intraday_tick,
-    in 30-day windows, resuming from research_backfill_state:
+    """Intraday ticks for one symbol from merolagani into market_intraday_tick,
+    in 30-day windows, resuming from market_backfill_state:
       1. forward: from the newest tick already covered up to now;
       2. backward (if `backward`): from the oldest covered tick back to
          start_date, then marked exhausted.
@@ -346,7 +346,7 @@ async def backfill_intraday_ticks_activity(
 @activity.defn
 async def capture_eod_stock_prices_activity(timeout: int) -> dict[str, Any]:
     """After the close: the official today-price (closePrice is only set
-    once the session ends) into nepse_stock_daily for today, with turnover
+    once the session ends) into market_stock_daily for today, with turnover
     and trade counts merolagani doesn't have. Skipped when NEPSE's latest
     session isn't today (holiday)."""
     today = npt_today()
@@ -366,7 +366,7 @@ async def capture_eod_stock_prices_activity(timeout: int) -> dict[str, Any]:
             "close": r.get("closePrice") or r.get("lastUpdatedPrice"),
             "volume": r.get("totalTradedQuantity"),
             "turnover": r.get("totalTradedValue"),
-            "total_trades": r.get("totalTrades"),
+            "trade_count": r.get("totalTrades"),
         }
         for r in rows
         if r.get("symbol") and r.get("businessDate") == today.isoformat()
@@ -380,7 +380,7 @@ async def capture_eod_stock_prices_activity(timeout: int) -> dict[str, Any]:
 @activity.defn
 async def capture_official_index_history_activity(timeout: int, size: int) -> int:
     """The last `size` official daily bars for all 17 indices (the official
-    API keeps ~1 year, ~235 sessions) into nepse_index_daily -- the only
+    API keeps ~1 year, ~235 sessions) into market_index_daily -- the only
     source with share volume and transaction counts. The still-open
     session (closingIndex == 0) is skipped."""
     auth_context = await asyncio.to_thread(fetch_auth_context, timeout)
@@ -403,7 +403,7 @@ async def capture_official_index_history_activity(timeout: int, size: int) -> in
                     "close": close,
                     "volume": r.get("turnoverVolume"),
                     "turnover": r.get("turnoverValue"),
-                    "total_transactions": r.get("totalTransaction"),
+                    "trade_count": r.get("totalTransaction"),
                 }
             )
         activity.heartbeat(spec.name)

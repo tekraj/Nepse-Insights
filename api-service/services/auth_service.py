@@ -9,14 +9,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nepse_common.config import AuthConfig
-from nepse_common.models import AdminUser
+from nepse_common.models import AppUser
 from nepse_common.security import verify_password
 
 _JWT_ALGO = "HS256"
 
 
 class AuthService:
-    """DB-backed admin login. Credentials live in admin_users (bcrypt hash);
+    """DB-backed admin login. Credentials live in app_user (bcrypt hash);
     there is no signup endpoint -- accounts are created only via manage.py create-admin.
     """
 
@@ -40,8 +40,8 @@ class AuthService:
         except jwt.PyJWTError as e:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from e
 
-    def authenticate(self, email: str, password: str) -> tuple[str, AdminUser]:
-        """Validates credentials against admin_users.
+    def authenticate(self, email: str, password: str) -> tuple[str, AppUser]:
+        """Validates credentials against app_user.
 
         Returns (signed_jwt, user) on success or raises HTTPException(401) on
         mismatch (invalid email, wrong password, or an inactive account) --
@@ -55,7 +55,7 @@ class AuthService:
         supplied_password = password or ""
 
         user = self._db.execute(
-            select(AdminUser).where(AdminUser.email == normalized_email)
+            select(AppUser).where(AppUser.email == normalized_email)
         ).scalar_one_or_none()
 
         if (

@@ -44,7 +44,7 @@ async def scrape_news_activity(
 
 @activity.defn
 async def write_articles_activity(articles: list[dict[str, Any]]) -> int:
-    """Insert articles into nepse_news, deduplicating by url via
+    """Insert articles into news_article, deduplicating by url via
     ON CONFLICT DO NOTHING (matches old db/writer.py write_articles()
     semantics). Returns the count of NEWLY inserted rows only, obtained via
     a RETURNING clause since plain rowcount is unreliable with

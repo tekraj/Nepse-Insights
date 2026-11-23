@@ -16,14 +16,14 @@ during that phase and infers the export control's selector from it, so it
 doesn't have to guess -- then it automates the rest of the jobs using that
 same selector.
 
-Setup:
-    cd scripts/nepsealpha-scraper
-    python3 -m venv venv
-    ./venv/bin/pip install -r requirements.txt
-    ./venv/bin/python -m playwright install chromium
+Setup (project venv from the root pyproject.toml, with the "scripts" extra):
+    uv sync --extra scripts      # once, from the repo root
+    source .venv/bin/activate
+    python -m playwright install chromium
 
 Run:
-    ./venv/bin/python scrape_nepsealpha.py
+    cd scripts/nepsealpha-scraper
+    python scrape_nepsealpha.py
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class ScrapeJob:
 
 
 # Gap plan, derived from comparing the checked-in CSVs' date ranges against
-# what's already live-scraped into the nepse_index table (see the project
+# what's already live-scraped into the market_index_snapshot table (see the project
 # conversation this script was built from -- re-verify against your own
 # current DB state with the accompanying check_gaps.sql before relying on
 # this list if time has passed and the live scraper has filled in more days).

@@ -14,14 +14,14 @@ from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
 from nepse_common.db.upserts import upsert_brokers
 from nepse_common.models import (
-    NepseBroker,
-    NepseFloorsheet,
-    NepseIndexDaily,
-    NepseMarketDepth,
-    NepseSectorSummary,
-    NepseStockDaily,
-    NepseTodayPrice,
-    ResearchBackfillState,
+    MarketBackfillState,
+    MarketBroker,
+    MarketIndexDaily,
+    MarketOrderBookSnapshot,
+    MarketPriceSnapshot,
+    MarketSectorSnapshot,
+    MarketStockDaily,
+    MarketTrade,
 )
 
 from scraper.merolagani_floorsheet import FloorSheetHistory, FloorSheetPageError
@@ -48,14 +48,14 @@ MARKET_DEPTH_ITEM_PAUSE_SECONDS = 1.0
 FLOOR_SHEET_PAGE_PAUSE_SECONDS = 1.0
 
 # A past session counts as complete once this share of merolagani's listed
-# trades carry broker ids in nepse_floorsheet: its server-side paging
+# trades carry broker codes in market_trade: its server-side paging
 # repeats/skips a few dozen rows per day (~0.08% on 2026-10-12, which ended
 # with more trades stored than NEPSE's official transaction count), so an
 # exact match would re-download complete days every week.
 _FLOOR_SHEET_COMPLETE_RATIO = 0.998
 _FLOOR_SHEET_HISTORY_DATASET = "floorsheet_history"
 
-# Broker names for backfilled trades come from nepse_broker (NEPSE's official
+# Broker names for backfilled trades come from market_broker (NEPSE's official
 # member list, i.e. each code's *current* name -- a firm that renamed shows
 # its new name for old sessions too), refreshed when older than this.
 _BROKER_MASTER_MAX_AGE = timedelta(days=7)
@@ -127,19 +127,19 @@ async def write_today_price_activity(rows: list[dict[str, Any]]) -> int:
                 "security_id": r.get("securityId"),
                 "symbol": r.get("symbol"),
                 "security_name": r.get("securityName"),
-                "open_price": r.get("openPrice"),
-                "high_price": r.get("highPrice"),
-                "low_price": r.get("lowPrice"),
-                "close_price": r.get("closePrice"),
+                "open": r.get("openPrice"),
+                "high": r.get("highPrice"),
+                "low": r.get("lowPrice"),
+                "close": r.get("closePrice"),
                 "previous_close": previous_close,
-                "ltp": ltp,
+                "last_traded_price": ltp,
                 "percent_change": percent_change,
-                "total_trade_quantity": r.get("totalTradedQuantity"),
-                "total_trade_value": r.get("totalTradedValue"),
-                "total_trades": r.get("totalTrades"),
+                "volume": r.get("totalTradedQuantity"),
+                "turnover": r.get("totalTradedValue"),
+                "trade_count": r.get("totalTrades"),
                 "average_traded_price": r.get("averageTradedPrice"),
-                "last_updated_time": _parse_dt(r.get("lastUpdatedTime")),
-                "business_date": r.get("businessDate"),
+                "last_traded_at": _parse_dt(r.get("lastUpdatedTime")),
+                "trade_date": r.get("businessDate"),
             }
         )
     if stale:
@@ -148,7 +148,7 @@ async def write_today_price_activity(rows: list[dict[str, Any]]) -> int:
         return 0
 
     with session_scope(config.database) as session:
-        session.execute(NepseTodayPrice.__table__.insert(), records)
+        session.execute(MarketPriceSnapshot.__table__.insert(), records)
 
     activity.logger.info(f"[DB] Saved {len(records)} today-price records.")
     return len(records)
@@ -175,11 +175,11 @@ async def write_sector_summary_activity(rows: list[dict[str, Any]]) -> int:
     records = [
         {
             "sector_name": r.get("sectorName") or r.get("sector"),
-            "total_turnover": r.get("turnOverValues", r.get("totalTurnover")),
-            "total_trade_quantity": r.get("turnOverVolume", r.get("totalTradeQuantity")),
-            "total_transactions": r.get("totalTransaction", r.get("totalTransactions")),
-            "total_scrips_traded": r.get("totalScripsTraded"),
-            "business_date": r.get("businessDate"),
+            "turnover": r.get("turnOverValues", r.get("totalTurnover")),
+            "volume": r.get("turnOverVolume", r.get("totalTradeQuantity")),
+            "trade_count": r.get("totalTransaction", r.get("totalTransactions")),
+            "traded_security_count": r.get("totalScripsTraded"),
+            "trade_date": r.get("businessDate"),
         }
         for r in rows
         if (r.get("sectorName") or r.get("sector")) and r.get("businessDate") == today
@@ -188,7 +188,7 @@ async def write_sector_summary_activity(rows: list[dict[str, Any]]) -> int:
         return 0
 
     with session_scope(config.database) as session:
-        session.execute(NepseSectorSummary.__table__.insert(), records)
+        session.execute(MarketSectorSnapshot.__table__.insert(), records)
 
     activity.logger.info(f"[DB] Saved {len(records)} sector-summary records.")
     return len(records)
@@ -213,16 +213,16 @@ def _floor_sheet_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         by_key[(contract_id, r.get("businessDate"))] = {
             "contract_id": contract_id,
             "symbol": symbol,
-            "stock_id": _to_int(r.get("stockId")),
+            "security_id": _to_int(r.get("stockId")),
             "trade_book_id": _to_int(r.get("tradeBookId")),
-            "buyer_member_id": _to_int(r.get("buyerMemberId")),
-            "seller_member_id": _to_int(r.get("sellerMemberId")),
+            "buyer_broker_code": _to_int(r.get("buyerMemberId")),
+            "seller_broker_code": _to_int(r.get("sellerMemberId")),
             "buyer_broker_name": r.get("buyerBrokerName") or None,
             "seller_broker_name": r.get("sellerBrokerName") or None,
-            "contract_quantity": r.get("contractQuantity"),
-            "contract_rate": r.get("contractRate"),
-            "contract_amount": r.get("contractAmount"),
-            "business_date": r.get("businessDate"),
+            "quantity": r.get("contractQuantity"),
+            "price": r.get("contractRate"),
+            "amount": r.get("contractAmount"),
+            "trade_date": r.get("businessDate"),
             "trade_time": r.get("tradeTime"),
         }
     return list(by_key.values())
@@ -230,17 +230,17 @@ def _floor_sheet_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _upsert_floor_sheet(session, records: list[dict[str, Any]]) -> tuple[int, int]:
     """Insert new contracts; for contracts already stored, fill in broker
-    ids/names (and stock/trade-book ids) that were NULL when the row was
+    codes/names (and security/trade-book ids) that were NULL when the row was
     first written during the session. Rows that gain nothing are left
     untouched. Returns (inserted, updated)."""
     if not records:
         return 0, 0
 
-    table = NepseFloorsheet.__table__
-    fill_cols = ("stock_id", "trade_book_id", "buyer_member_id", "seller_member_id", "buyer_broker_name", "seller_broker_name")
+    table = MarketTrade.__table__
+    fill_cols = ("security_id", "trade_book_id", "buyer_broker_code", "seller_broker_code", "buyer_broker_name", "seller_broker_name")
     stmt = pg_insert(table).values(records)
     stmt = stmt.on_conflict_do_update(
-        index_elements=["contract_id", "business_date"],
+        index_elements=["contract_id", "trade_date"],
         set_={c: func.coalesce(table.c[c], getattr(stmt.excluded, c)) for c in fill_cols},
         where=or_(*[table.c[c].is_(None) & getattr(stmt.excluded, c).isnot(None) for c in fill_cols]),
     ).returning(literal_column("(xmax = 0)"))
@@ -251,7 +251,7 @@ def _upsert_floor_sheet(session, records: list[dict[str, Any]]) -> tuple[int, in
 
 @activity.defn
 async def write_floor_sheet_activity(rows: list[dict[str, Any]]) -> int:
-    """Upsert on (contract_id, business_date) -- floor-sheet rows have a
+    """Upsert on (contract_id, trade_date) -- floor-sheet rows have a
     real natural key, so a tick re-fetching overlapping rows never inserts
     duplicates, and a later fetch that carries broker info fills it in.
     Returns the number of newly inserted contracts."""
@@ -291,7 +291,7 @@ async def sweep_floor_sheet_activity(timeout: int) -> dict[str, Any]:
 
         records = _floor_sheet_records([r for r in rows if r.get("businessDate") == today])
         seen += len(records)
-        with_broker += sum(1 for r in records if r["buyer_member_id"] is not None or r["buyer_broker_name"])
+        with_broker += sum(1 for r in records if r["buyer_broker_code"] is not None or r["buyer_broker_name"])
         with session_scope(config.database) as session:
             page_inserted, page_updated = _upsert_floor_sheet(session, records)
         inserted += page_inserted
@@ -304,7 +304,7 @@ async def sweep_floor_sheet_activity(timeout: int) -> dict[str, Any]:
 
     with session_scope(config.database) as session:
         stored = session.execute(
-            select(func.count()).select_from(NepseFloorsheet).where(NepseFloorsheet.business_date == today)
+            select(func.count()).select_from(MarketTrade).where(MarketTrade.trade_date == today)
         ).scalar_one()
 
     result = {
@@ -325,33 +325,33 @@ async def sweep_floor_sheet_activity(timeout: int) -> dict[str, Any]:
 @activity.defn
 async def list_trading_days_activity(start_date: str, end_date: str) -> list[str]:
     """NEPSE sessions in [start_date, end_date] (ISO dates), oldest first,
-    from the trading calendar in nepse_index_daily."""
+    from the trading calendar in market_index_daily."""
     config = load_app_config()
     with session_scope(config.database) as session:
         days = session.execute(
-            select(NepseIndexDaily.trade_date)
+            select(MarketIndexDaily.trade_date)
             .where(
-                NepseIndexDaily.index_name == "NEPSE",
-                NepseIndexDaily.trade_date >= date.fromisoformat(start_date),
-                NepseIndexDaily.trade_date <= date.fromisoformat(end_date),
+                MarketIndexDaily.index_name == "NEPSE",
+                MarketIndexDaily.trade_date >= date.fromisoformat(start_date),
+                MarketIndexDaily.trade_date <= date.fromisoformat(end_date),
             )
-            .order_by(NepseIndexDaily.trade_date)
+            .order_by(MarketIndexDaily.trade_date)
         ).scalars()
         return [d.isoformat() for d in days]
 
 
 def refresh_broker_master(timeout: int) -> int:
-    """Upserts NEPSE's official member list into nepse_broker; returns the
+    """Upserts NEPSE's official member list into market_broker; returns the
     number of brokers. Blocking -- call via asyncio.to_thread."""
     rows = fetch_broker_list(timeout)
     records = [
         {
-            "member_code": r["memberCode"],
-            "member_name": " ".join(str(r["memberName"]).split()),
+            "broker_code": r["memberCode"],
+            "broker_name": " ".join(str(r["memberName"]).split()),
             "active_status": r.get("activeStatus"),
             "membership_type": (r.get("membershipTypeMaster") or {}).get("membershipType"),
             "is_dealer": {"Y": True, "N": False}.get(r.get("isDealer")),
-            "nepse_member_id": r.get("id"),
+            "nepse_internal_id": r.get("id"),
         }
         for r in rows
         if r.get("memberCode") is not None and r.get("memberName")
@@ -363,11 +363,11 @@ def refresh_broker_master(timeout: int) -> int:
 
 
 def _ensure_broker_master(timeout: int) -> None:
-    """Refreshes nepse_broker when it is empty or stale. A failed refresh
+    """Refreshes market_broker when it is empty or stale. A failed refresh
     is logged, not raised: the stored (or sweep-learned) names still apply."""
     config = load_app_config()
     with session_scope(config.database) as session:
-        last = session.execute(select(func.max(NepseBroker.updated_at))).scalar_one()
+        last = session.execute(select(func.max(MarketBroker.updated_at))).scalar_one()
     if last is not None and datetime.now() - last < _BROKER_MASTER_MAX_AGE:
         return
     try:
@@ -377,7 +377,7 @@ def _ensure_broker_master(timeout: int) -> None:
 
 
 def _broker_names(session) -> dict[int, str]:
-    """member code -> broker name: nepse_broker (official list), plus names
+    """broker code -> broker name: market_broker (official list), plus names
     seen in the last 30 days of post-close sweeps for codes the list lacks.
     merolagani's history only has the codes. Cached per process -- this
     runs once per backfilled session."""
@@ -388,47 +388,47 @@ def _broker_names(session) -> dict[int, str]:
 
     since = (npt_today() - timedelta(days=30)).isoformat()
     names: dict[int, str] = {}
-    for member_col, name_col in (
-        (NepseFloorsheet.buyer_member_id, NepseFloorsheet.buyer_broker_name),
-        (NepseFloorsheet.seller_member_id, NepseFloorsheet.seller_broker_name),
+    for code_col, name_col in (
+        (MarketTrade.buyer_broker_code, MarketTrade.buyer_broker_name),
+        (MarketTrade.seller_broker_code, MarketTrade.seller_broker_name),
     ):
         rows = session.execute(
-            select(member_col, name_col)
-            .where(NepseFloorsheet.business_date >= since, member_col.isnot(None), name_col.isnot(None))
+            select(code_col, name_col)
+            .where(MarketTrade.trade_date >= since, code_col.isnot(None), name_col.isnot(None))
             .distinct()
         ).all()
-        names.update({member_id: name for member_id, name in rows})
-    names.update(dict(session.execute(select(NepseBroker.member_code, NepseBroker.member_name)).all()))
+        names.update({code: name for code, name in rows})
+    names.update(dict(session.execute(select(MarketBroker.broker_code, MarketBroker.broker_name)).all()))
     _broker_name_cache = (now, names)
     return names
 
 
 @activity.defn
 async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_seconds: float) -> dict[str, Any]:
-    """Completes one past session in nepse_floorsheet from merolagani's
-    floor-sheet history: fills buyer/seller broker ids (and names, from
-    nepse_broker) on stored contracts and inserts
+    """Completes one past session in market_trade from merolagani's
+    floor-sheet history: fills buyer/seller broker codes (and names, from
+    market_broker) on stored contracts and inserts
     the contracts the 500-per-minute intraday scrape missed (those get no
     trade_time -- merolagani doesn't publish it). merolagani lists equities
-    only, so mutual-fund/debenture trades keep NULL broker ids. Skips a day
-    already filled by this activity (research_backfill_state) or whose
-    stored broker-id coverage is >= _FLOOR_SHEET_COMPLETE_RATIO of
+    only, so mutual-fund/debenture trades keep NULL broker codes. Skips a day
+    already filled by this activity (market_backfill_state) or whose
+    stored broker-code coverage is >= _FLOOR_SHEET_COMPLETE_RATIO of
     merolagani's total. Resumes from the last heartbeated page on retry."""
     day = date.fromisoformat(day_iso)
     config = load_app_config()
     with session_scope(config.database) as session:
         done = session.execute(
-            select(ResearchBackfillState.exhausted).where(
-                ResearchBackfillState.dataset == _FLOOR_SHEET_HISTORY_DATASET,
-                ResearchBackfillState.symbol == day_iso,
+            select(MarketBackfillState.exhausted).where(
+                MarketBackfillState.dataset == _FLOOR_SHEET_HISTORY_DATASET,
+                MarketBackfillState.item_key == day_iso,
             )
         ).scalar_one_or_none()
         if done:
             return {"day": day_iso, "status": "complete", "total": None}
         with_broker = session.execute(
             select(func.count())
-            .select_from(NepseFloorsheet)
-            .where(NepseFloorsheet.business_date == day_iso, NepseFloorsheet.buyer_member_id.isnot(None))
+            .select_from(MarketTrade)
+            .where(MarketTrade.trade_date == day_iso, MarketTrade.buyer_broker_code.isnot(None))
         ).scalar_one()
 
     await asyncio.to_thread(_ensure_broker_master, timeout)
@@ -491,11 +491,11 @@ async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_se
         by_contract = {
             r["contract_id"]: {
                 **r,
-                "stock_id": None,
+                "security_id": None,
                 "trade_book_id": None,
-                "buyer_broker_name": names.get(r["buyer_member_id"]),
-                "seller_broker_name": names.get(r["seller_member_id"]),
-                "business_date": day_iso,
+                "buyer_broker_name": names.get(r["buyer_broker_code"]),
+                "seller_broker_name": names.get(r["seller_broker_code"]),
+                "trade_date": day_iso,
                 "trade_time": None,
             }
             for r in rows
@@ -514,16 +514,16 @@ async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_se
 
     with session_scope(config.database) as session:
         stored, stored_with_broker = session.execute(
-            select(func.count(), func.count(NepseFloorsheet.buyer_member_id)).where(NepseFloorsheet.business_date == day_iso)
+            select(func.count(), func.count(MarketTrade.buyer_broker_code)).where(MarketTrade.trade_date == day_iso)
         ).one()
         # Every page arrived intact (page() raises otherwise), so the day is
         # done; rows_written records merolagani's listed total for audits.
-        state = pg_insert(ResearchBackfillState.__table__).values(
-            dataset=_FLOOR_SHEET_HISTORY_DATASET, symbol=day_iso, exhausted=True, rows_written=total
+        state = pg_insert(MarketBackfillState.__table__).values(
+            dataset=_FLOOR_SHEET_HISTORY_DATASET, item_key=day_iso, exhausted=True, rows_written=total
         )
         session.execute(
             state.on_conflict_do_update(
-                index_elements=["dataset", "symbol"],
+                index_elements=["dataset", "item_key"],
                 set_={"exhausted": True, "rows_written": state.excluded.rows_written, "last_run_at": func.now()},
             )
         )
@@ -543,29 +543,29 @@ async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_se
 
 def _liquid_symbols(session, top_n: int) -> list[str]:
     """Most liquid symbols by turnover on the latest session with official
-    EOD data in nepse_stock_daily; before that exists, by peak intraday
-    turnover over the last week of today-price snapshots."""
+    EOD data in market_stock_daily; before that exists, by peak intraday
+    turnover over the last week of price snapshots."""
     latest = session.execute(
-        select(func.max(NepseStockDaily.trade_date)).where(
-            NepseStockDaily.source == "nepalstock", NepseStockDaily.turnover.isnot(None)
+        select(func.max(MarketStockDaily.trade_date)).where(
+            MarketStockDaily.source == "nepalstock", MarketStockDaily.turnover.isnot(None)
         )
     ).scalar_one_or_none()
     if latest is not None:
         return list(
             session.execute(
-                select(NepseStockDaily.symbol)
-                .where(NepseStockDaily.trade_date == latest, NepseStockDaily.turnover.isnot(None))
-                .order_by(NepseStockDaily.turnover.desc())
+                select(MarketStockDaily.symbol)
+                .where(MarketStockDaily.trade_date == latest, MarketStockDaily.turnover.isnot(None))
+                .order_by(MarketStockDaily.turnover.desc())
                 .limit(top_n)
             ).scalars()
         )
 
-    peak = func.max(NepseTodayPrice.total_trade_value)
+    peak = func.max(MarketPriceSnapshot.turnover)
     return list(
         session.execute(
-            select(NepseTodayPrice.symbol)
-            .where(NepseTodayPrice.scraped_at >= datetime.combine(date.today() - timedelta(days=7), datetime.min.time()))
-            .group_by(NepseTodayPrice.symbol)
+            select(MarketPriceSnapshot.symbol)
+            .where(MarketPriceSnapshot.scraped_at >= datetime.combine(date.today() - timedelta(days=7), datetime.min.time()))
+            .group_by(MarketPriceSnapshot.symbol)
             .order_by(peak.desc().nulls_last())
             .limit(top_n)
         ).scalars()
@@ -626,7 +626,7 @@ async def write_market_depth_activity(entries: list[dict[str, Any]]) -> int:
     ({symbol, totalBuyQty, totalSellQty, marketDepth: {buyMarketDepthList,
     sellMarketDepthList}}); buy/sell ladders are stored as JSONB as-is
     rather than normalized into a separate levels table (see
-    NepseMarketDepth model docstring)."""
+    MarketOrderBookSnapshot model docstring)."""
     if not entries:
         return 0
 
@@ -639,15 +639,15 @@ async def write_market_depth_activity(entries: list[dict[str, Any]]) -> int:
             {
                 "security_id": entry["security_id"],
                 "symbol": entry["symbol"],
-                "total_buy_qty": depth.get("totalBuyQty"),
-                "total_sell_qty": depth.get("totalSellQty"),
+                "total_buy_quantity": depth.get("totalBuyQty"),
+                "total_sell_quantity": depth.get("totalSellQty"),
                 "buy_levels": market_depth.get("buyMarketDepthList"),
                 "sell_levels": market_depth.get("sellMarketDepthList"),
             }
         )
 
     with session_scope(config.database) as session:
-        session.execute(NepseMarketDepth.__table__.insert(), records)
+        session.execute(MarketOrderBookSnapshot.__table__.insert(), records)
 
     activity.logger.info(f"[DB] Saved {len(records)} market-depth records.")
     return len(records)

@@ -11,7 +11,7 @@ from temporalio import activity
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
-from nepse_common.models import NepseIndex, NepseTodayPrice
+from nepse_common.models import MarketIndexSnapshot, MarketPriceSnapshot
 
 from scraper.nepse_market_data import fetch_market_status
 from scraper.nepse_scraper import scrape_all_nepse_data
@@ -59,14 +59,14 @@ def _official_market_status(timeout: int = 10) -> str:
 
 
 def _traded_today(today: date) -> bool:
-    """True once any today-price snapshot for today's business date exists
+    """True once any price snapshot for today's trade date exists
     -- i.e. today really was a trading session, not a holiday."""
     config = load_app_config()
     with session_scope(config.database) as session:
         row = session.execute(
-            select(NepseTodayPrice.id)
-            .where(NepseTodayPrice.scraped_at >= datetime.combine(today, dtime(0, 0)))
-            .where(NepseTodayPrice.business_date == today.isoformat())
+            select(MarketPriceSnapshot.id)
+            .where(MarketPriceSnapshot.scraped_at >= datetime.combine(today, dtime(0, 0)))
+            .where(MarketPriceSnapshot.trade_date == today.isoformat())
             .limit(1)
         ).first()
         return row is not None
@@ -120,7 +120,7 @@ async def is_market_open_activity(require_open_status: bool = False) -> bool:
 async def scrape_nepse_index_activity(timeout: int) -> dict[str, Any]:
     """Calls scraper.nepse_scraper.scrape_all_nepse_data() unchanged.
 
-    The old code already returns plain dicts/strings (nepse_index and each
+    The old code already returns plain dicts/strings (the "nepse_index" entry and each
     sector_indices entry are plain dicts with str/float/None values, and
     scraped_at/source fields are strings), so the result is directly
     JSON-serializable as-is. We do NOT additionally validate the nested
@@ -150,8 +150,8 @@ async def write_nepse_index_activity(index_data: dict[str, Any]) -> int:
         records.append(
             {
                 "index_name": main.get("index", "NEPSE"),
-                "value": main.get("value"),
-                "change": main.get("change"),
+                "index_value": main.get("value"),
+                "point_change": main.get("change"),
                 "percent_change": main.get("percent_change"),
             }
         )
@@ -161,8 +161,8 @@ async def write_nepse_index_activity(index_data: dict[str, Any]) -> int:
             records.append(
                 {
                     "index_name": sector.get("index"),
-                    "value": sector.get("value"),
-                    "change": sector.get("change"),
+                    "index_value": sector.get("value"),
+                    "point_change": sector.get("change"),
                     "percent_change": sector.get("percent_change"),
                 }
             )
@@ -172,7 +172,7 @@ async def write_nepse_index_activity(index_data: dict[str, Any]) -> int:
         return 0
 
     with session_scope(config.database) as session:
-        session.execute(NepseIndex.__table__.insert(), records)
+        session.execute(MarketIndexSnapshot.__table__.insert(), records)
 
     activity.logger.info(f"[DB] Saved {len(records)} NEPSE index records.")
     return len(records)

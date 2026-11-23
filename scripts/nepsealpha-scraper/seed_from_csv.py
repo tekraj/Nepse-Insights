@@ -1,5 +1,5 @@
 """
-Seeds nepse_index (close only) and nepse_index_daily (full OHLC + turnover)
+Seeds market_index_snapshot (close only) and market_index_daily (full OHLC + turnover)
 from CSV files in data/sector-2021-2026/ (existing checked-in
 exports plus anything newly downloaded by scrape_nepsealpha.py), using the same
 parsing and dedup logic as nepse-service's startup CSV import
@@ -9,12 +9,12 @@ parsing and dedup logic as nepse-service's startup CSV import
 Safe to re-run: existing (index_name, scraped_at) pairs already in the table are
 skipped, so this only inserts genuinely new rows.
 
-Requirements: run with a Python environment that has nepse-common installed
-(e.g. the same venv used for api-service/nepse-service development), and
-nepse-service's package on the import path for historical_nepse_loader.
+Requirements: the project venv (`uv sync` at the repo root, see pyproject.toml),
+which has nepse-common installed; nepse-service's directory is put on the
+import path below for historical_nepse_loader.
 
-Usage:
-    PYTHONPATH=/path/to/nepse-service python seed_from_csv.py [csv_dir]
+Usage (from the repo root; POSTGRES_HOST=localhost reaches the compose DB):
+    POSTGRES_HOST=localhost .venv/bin/python scripts/nepsealpha-scraper/seed_from_csv.py [csv_dir]
 
     csv_dir defaults to data/sector-2021-2026/ relative to the repo root.
 """
@@ -29,7 +29,7 @@ from sqlalchemy import select
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
 from nepse_common.db.upserts import upsert_index_daily
-from nepse_common.models import NepseIndex
+from nepse_common.models import MarketIndexSnapshot
 from nepse_common.schemas.scraped import ScrapedIndexPoint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -58,7 +58,7 @@ def seed(csv_dir: str) -> dict[str, int]:
     parsed = len(validated_rows)
 
     with session_scope(config.database) as session:
-        existing_pairs = set(session.execute(select(NepseIndex.index_name, NepseIndex.scraped_at)).all())
+        existing_pairs = set(session.execute(select(MarketIndexSnapshot.index_name, MarketIndexSnapshot.scraped_at)).all())
         existing_keys = {
             (name, scraped_at.isoformat() if hasattr(scraped_at, "isoformat") else scraped_at)
             for name, scraped_at in existing_pairs
@@ -67,8 +67,8 @@ def seed(csv_dir: str) -> dict[str, int]:
         to_insert = [
             {
                 "index_name": row["index_name"],
-                "value": row.get("value"),
-                "change": row.get("change"),
+                "index_value": row.get("value"),
+                "point_change": row.get("change"),
                 "percent_change": row.get("percent_change"),
                 "scraped_at": row["scraped_at"],
             }
@@ -87,11 +87,11 @@ def seed(csv_dir: str) -> dict[str, int]:
 
         inserted = 0
         if deduped_insert:
-            session.execute(NepseIndex.__table__.insert(), deduped_insert)
+            session.execute(MarketIndexSnapshot.__table__.insert(), deduped_insert)
             inserted = len(deduped_insert)
 
         # Full OHLC + turnover bars, lowest source precedence (never
-        # overwrites merolagani/official rows in nepse_index_daily).
+        # overwrites merolagani/official rows in market_index_daily).
         daily = upsert_index_daily(session, raw_rows, source="csv")
 
     print(f"Parsed {parsed} rows from {csv_dir}, inserted {inserted} new rows "

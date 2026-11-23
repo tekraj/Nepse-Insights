@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from temporalio.client import Client
 
-from nepse_common.models import PipelineRunLog
+from nepse_common.models import PipelineRun
 from nepse_common.schemas.util import to_iso
 
 from services.temporal_client import BACKFILL_WORKFLOW_NAME, TASK_QUEUE
@@ -43,16 +43,16 @@ class AdminBackfillService:
 
     def get_backfill_status(self) -> dict[str, Any]:
         """Best-effort reconstruction of the old in-memory `_historical_status` dict
-        from the most recent backfill-related PipelineRunLog row.
+        from the most recent backfill-related PipelineRun row.
 
         NOTE: `running` is always False here -- the api-service has no way to know
         live Temporal workflow state from the DB alone; a real "is it still running"
         answer would require calling handle.describe() against the Temporal server.
         """
         stmt = (
-            select(PipelineRunLog)
-            .where(PipelineRunLog.message.ilike("%backfill%"))
-            .order_by(PipelineRunLog.started_at.desc().nulls_last(), PipelineRunLog.id.desc())
+            select(PipelineRun)
+            .where(PipelineRun.message.ilike("%backfill%"))
+            .order_by(PipelineRun.started_at.desc().nulls_last(), PipelineRun.id.desc())
             .limit(1)
         )
         row = self._db.execute(stmt).scalars().first()

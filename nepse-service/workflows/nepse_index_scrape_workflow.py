@@ -22,12 +22,12 @@ _DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 @workflow.defn
 class NepseIndexScrapeWorkflow:
     """Scrapes the live NEPSE index + sector indices and writes to
-    nepse_index.
+    market_index_snapshot.
 
     NOTE: in the old monolith, run_pipeline() did news scraping AND the
-    live NEPSE index scrape in a single pipeline_run_logs row per run. Here
+    live NEPSE index scrape in a single pipeline_run row per run. Here
     they are split into two separate Temporal workflows/schedules
-    (NewsScrapeWorkflow and this one), so each pipeline_run_logs row
+    (NewsScrapeWorkflow and this one), so each pipeline_run row
     written by THIS workflow reflects ONLY the nepse portion (news_total=0,
     news_inserted=0 always). This is an intentional, acceptable behavior
     split now that news and index scraping run independently.

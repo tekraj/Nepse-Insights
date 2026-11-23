@@ -8,14 +8,14 @@ from temporalio import activity
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
 from nepse_common.db.upserts import upsert_index_daily
-from nepse_common.models import NepseIndex, PipelineRunLog
+from nepse_common.models import MarketIndexSnapshot, PipelineRun
 from nepse_common.schemas.scraped import ScrapedIndexPoint
 
 from scraper.historical_nepse_loader import parse_historical_nepse_csvs
 
 # Bumped from "historical_nepse_csv_import" when the import started also
-# writing full daily bars to nepse_index_daily, so deployments that already
-# ran the close-only import re-run it once (the nepse_index part stays
+# writing full daily bars to market_index_daily, so deployments that already
+# ran the close-only import re-run it once (the market_index_snapshot part stays
 # deduped, so nothing is duplicated). Must match the workflow's constant.
 _CSV_IMPORT_MESSAGE = "historical_nepse_csv_import_v2"
 
@@ -23,15 +23,15 @@ _CSV_IMPORT_MESSAGE = "historical_nepse_csv_import_v2"
 @activity.defn
 async def check_csv_import_done_activity() -> bool:
     """Replaces old db/writer.py has_successful_pipeline_message(): True if
-    pipeline_run_logs already has a successful row for the CSV import."""
+    pipeline_run already has a successful row for the CSV import."""
     config = load_app_config()
 
     with session_scope(config.database) as session:
         stmt = (
-            select(PipelineRunLog.id)
+            select(PipelineRun.id)
             .where(
-                PipelineRunLog.status == "success",
-                PipelineRunLog.message == _CSV_IMPORT_MESSAGE,
+                PipelineRun.status == "success",
+                PipelineRun.message == _CSV_IMPORT_MESSAGE,
             )
             .limit(1)
         )
@@ -46,12 +46,12 @@ async def parse_and_write_csv_activity(csv_dir: str) -> dict[str, int]:
     index/index_name normalization in the pydantic schema matters, since
     the loader emits "index_name" already but the schema also accepts a
     bare "index" key for parity with the live-scrape payload shape), and
-    inserts into nepse_index with dedup by (index_name, scraped_at).
+    inserts into market_index_snapshot with dedup by (index_name, scraped_at).
 
     Dedup approach: this activity runs once as a startup import over a
     bounded, known CSV dataset (a few years of daily rows per index), so a
     single bulk pre-fetch of all existing (index_name, scraped_at) pairs
-    from nepse_index -- rather than one SELECT EXISTS per row -- is simpler
+    from market_index_snapshot -- rather than one SELECT EXISTS per row -- is simpler
     to implement correctly and cheap enough at this data volume. Rows
     already present are filtered out client-side before the bulk insert.
     """
@@ -71,7 +71,7 @@ async def parse_and_write_csv_activity(csv_dir: str) -> dict[str, int]:
     with session_scope(config.database) as session:
         existing_pairs = set(
             session.execute(
-                select(NepseIndex.index_name, NepseIndex.scraped_at)
+                select(MarketIndexSnapshot.index_name, MarketIndexSnapshot.scraped_at)
             ).all()
         )
         existing_keys = {
@@ -82,8 +82,8 @@ async def parse_and_write_csv_activity(csv_dir: str) -> dict[str, int]:
         to_insert = [
             {
                 "index_name": row["index_name"],
-                "value": row.get("value"),
-                "change": row.get("change"),
+                "index_value": row.get("value"),
+                "point_change": row.get("change"),
                 "percent_change": row.get("percent_change"),
                 "scraped_at": row["scraped_at"],
             }
@@ -103,7 +103,7 @@ async def parse_and_write_csv_activity(csv_dir: str) -> dict[str, int]:
 
         inserted = 0
         if deduped_insert:
-            session.execute(NepseIndex.__table__.insert(), deduped_insert)
+            session.execute(MarketIndexSnapshot.__table__.insert(), deduped_insert)
             inserted = len(deduped_insert)
 
         # Full daily bars, lowest precedence: never overwrites merolagani or

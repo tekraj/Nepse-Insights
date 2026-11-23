@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from nepse_common.models import NepseIndex
+from nepse_common.models import MarketIndexSnapshot
 from nepse_common.schemas.util import to_iso
 
 from services import indicator_service
@@ -18,7 +18,7 @@ _NEPSE_MAIN_NAME = "NEPSE"
 
 # Dashboard index charts: raw 1-minute ticks up to a day, ticks thinned to
 # one per 10 minutes up to a week, and one official daily close per session
-# beyond that. nepse_index alone mixes granularities (one CSV close per day
+# beyond that. market_index_snapshot alone mixes granularities (one CSV close per day
 # before 2026-06-29, irregular ticks, then 1-minute ticks), which made long
 # windows unreadable -- and "All Time" for every sub-index was a 13 MB
 # response.
@@ -47,15 +47,15 @@ def _round(value: float | None, digits: int) -> float | None:
 def _fmt(row: Any) -> dict[str, Any]:
     return {
         "index": row.index_name,
-        "value": row.value,
-        "change": row.change,
+        "value": row.index_value,
+        "change": row.point_change,
         "percent_change": row.percent_change,
         "scraped_at": to_iso(row.scraped_at),
     }
 
 
 class NepseIndexService:
-    """Index queries against nepse_common.models.NepseIndex."""
+    """Index queries against nepse_common.models.MarketIndexSnapshot."""
 
     def __init__(self, db: Session) -> None:
         self._db = db
@@ -66,14 +66,14 @@ class NepseIndexService:
 
         stmt = (
             select(
-                NepseIndex.index_name,
-                NepseIndex.value,
-                NepseIndex.change,
-                NepseIndex.percent_change,
-                NepseIndex.scraped_at,
+                MarketIndexSnapshot.index_name,
+                MarketIndexSnapshot.index_value,
+                MarketIndexSnapshot.point_change,
+                MarketIndexSnapshot.percent_change,
+                MarketIndexSnapshot.scraped_at,
             )
-            .where(NepseIndex.scraped_at >= cutoff)
-            .order_by(NepseIndex.scraped_at.desc())
+            .where(MarketIndexSnapshot.scraped_at >= cutoff)
+            .order_by(MarketIndexSnapshot.scraped_at.desc())
         )
         rows = self._db.execute(stmt).all()
 
@@ -87,18 +87,18 @@ class NepseIndexService:
         }
 
     def _tick_rows(self, hours: int, main: bool) -> list[Any]:
-        name_filter = NepseIndex.index_name == _NEPSE_MAIN_NAME if main else NepseIndex.index_name != _NEPSE_MAIN_NAME
+        name_filter = MarketIndexSnapshot.index_name == _NEPSE_MAIN_NAME if main else MarketIndexSnapshot.index_name != _NEPSE_MAIN_NAME
         stmt = (
             select(
-                NepseIndex.index_name,
-                NepseIndex.value,
-                NepseIndex.change,
-                NepseIndex.percent_change,
-                NepseIndex.scraped_at,
+                MarketIndexSnapshot.index_name,
+                MarketIndexSnapshot.index_value,
+                MarketIndexSnapshot.point_change,
+                MarketIndexSnapshot.percent_change,
+                MarketIndexSnapshot.scraped_at,
             )
             .where(name_filter)
-            .where(NepseIndex.scraped_at >= _cutoff(hours))
-            .order_by(NepseIndex.index_name.asc(), NepseIndex.scraped_at.asc())
+            .where(MarketIndexSnapshot.scraped_at >= _cutoff(hours))
+            .order_by(MarketIndexSnapshot.index_name.asc(), MarketIndexSnapshot.scraped_at.asc())
         )
         rows = self._db.execute(stmt).all()
         if hours <= _TICK_MAX_HOURS:
@@ -117,7 +117,7 @@ class NepseIndexService:
         return thinned
 
     def _daily_points(self, hours: int, main: bool) -> dict[str, list[dict[str, Any]]]:
-        """One official close per session (nepse_index_daily) with change vs
+        """One official close per session (market_index_daily) with change vs
         the previous session, plus today's latest live tick while today's
         bar isn't written yet."""
         start = date.today() - timedelta(days=math.ceil(hours / 24))
@@ -129,7 +129,7 @@ class NepseIndexService:
                     SELECT index_name, trade_date, close,
                            close - lag(close) OVER w AS change,
                            (close / nullif(lag(close) OVER w, 0) - 1) * 100 AS percent_change
-                    FROM nepse_index_daily
+                    FROM market_index_daily
                     WHERE index_name {op} :main AND trade_date >= :start - 14
                     WINDOW w AS (PARTITION BY index_name ORDER BY trade_date)
                 ) d
@@ -216,7 +216,7 @@ class NepseIndexService:
         return [snap for snap in self._snapshots() if snap["index"] != _NEPSE_MAIN_NAME]
 
     def list_index_options(self) -> list[dict]:
-        """One entry per index in nepse_index_daily: sessions of history
+        """One entry per index in market_index_daily: sessions of history
         (`distinct_days`) and latest value."""
         return [
             {
@@ -229,13 +229,13 @@ class NepseIndexService:
         ]
 
     def get_indicators(self, index_name: str, days: int) -> dict:
-        """Official daily closes (nepse_index_daily: NEPSE from 2000, most
+        """Official daily closes (market_index_daily: NEPSE from 2000, most
         sub-indices from 2014-2016) plus technical indicators and turnover
         for `index_name`; see indicator_points for the windowing."""
         rows = self._db.execute(
             text(
                 """
-                SELECT trade_date, close, turnover FROM nepse_index_daily
+                SELECT trade_date, close, turnover FROM market_index_daily
                 WHERE index_name = :name ORDER BY trade_date
                 """
             ),

@@ -22,7 +22,7 @@ _NST = pytz.timezone("Asia/Kathmandu")
 @workflow.defn
 class HistoricalDailyBackfillWorkflow:
     """Scrapes one day of historical GDELT-backed news and writes it to
-    nepse_news. Mirrors old scheduler.py run_historical_daily_pipeline()."""
+    news_article. Mirrors old scheduler.py run_historical_daily_pipeline()."""
 
     @workflow.run
     async def run(self, target_day_iso: str | None = None) -> dict[str, Any]:

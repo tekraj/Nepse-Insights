@@ -1,5 +1,5 @@
 """Per-source extraction strategies for backfilling missing published_at /
-body on existing nepse_news rows, given only the row's own URL.
+body on existing news_article rows, given only the row's own URL.
 
 Each source needed its own fix after directly inspecting real article
 pages (see the dated research notes below) -- there is no single generic

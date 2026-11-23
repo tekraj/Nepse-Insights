@@ -1,5 +1,5 @@
 """Individual equities for the Technicals page: a searchable catalogue of
-every stock in nepse_stock_daily (active and delisted) and its daily
+every stock in market_stock_daily (active and delisted) and its daily
 series for the indicator charts.
 
 Indicators run on the bonus/right-adjusted closes by default: raw prices
@@ -44,23 +44,23 @@ class StockService:
             text(
                 """
                 SELECT d.symbol, d.sessions, d.first_date, d.last_date, l.closes, l.turnover,
-                       sec.company_name, sec.sector_name, sec.status, sec.instrument_type
+                       sec.company_name, sec.sector_name, sec.listing_status, sec.instrument_type
                 FROM (
                     SELECT symbol, count(*) AS sessions, min(trade_date) AS first_date, max(trade_date) AS last_date
-                    FROM nepse_stock_daily GROUP BY symbol
+                    FROM market_stock_daily GROUP BY symbol
                 ) d
                 CROSS JOIN LATERAL (
                     SELECT array_agg(close ORDER BY trade_date DESC) AS closes,
                            (array_agg(turnover ORDER BY trade_date DESC))[1] AS turnover
                     FROM (
-                        SELECT trade_date, close, turnover FROM nepse_stock_daily x
+                        SELECT trade_date, close, turnover FROM market_stock_daily x
                         WHERE x.symbol = d.symbol ORDER BY trade_date DESC LIMIT 2
                     ) y
                 ) l
                 LEFT JOIN LATERAL (
-                    SELECT company_name, sector_name, status, instrument_type FROM nepse_security s
+                    SELECT company_name, sector_name, listing_status, instrument_type FROM market_security s
                     WHERE s.symbol = d.symbol
-                    ORDER BY (s.status = 'A') DESC LIMIT 1
+                    ORDER BY (s.listing_status = 'A') DESC LIMIT 1
                 ) sec ON true
                 """
             )
@@ -77,7 +77,7 @@ class StockService:
                     "sector": r.sector_name,
                     # Mostly "Equity"; a few debentures/mutual funds have daily bars too.
                     "type": r.instrument_type,
-                    "status": _STATUS_LABELS.get(r.status, r.status) if r.status else None,
+                    "status": _STATUS_LABELS.get(r.listing_status, r.listing_status) if r.listing_status else None,
                     # Traded in the latest session: the default list and the
                     # search ranking put these first.
                     "trading": r.last_date == latest_session,
@@ -135,7 +135,7 @@ class StockService:
             text(
                 """
                 SELECT trade_date, close, adj_close, volume, turnover
-                FROM nepse_stock_daily WHERE symbol = :symbol AND close IS NOT NULL ORDER BY trade_date
+                FROM market_stock_daily WHERE symbol = :symbol AND close IS NOT NULL ORDER BY trade_date
                 """
             ),
             {"symbol": symbol},

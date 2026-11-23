@@ -5,25 +5,25 @@ from typing import Any
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
-from nepse_common.models import PipelineRunLog
+from nepse_common.models import PipelineRun
 from nepse_common.schemas.util import to_iso
 
 # Minute workflows log a success row with this message prefix on every tick
 # outside market hours -- by far most rows, and not a run that did anything.
 _SKIPPED_PREFIX = "market closed"
 
-# pipeline_run_logs.nepse_source names the source a run *used*, not the job:
+# pipeline_run.source names the source a run *used*, not the job:
 # the live index job logs nepalstock_official / nepsetrading_* / merolagani_*
 # depending on which fallback answered, and "none" when it skipped -- which
 # is also what news-scraper runs log. Map rows to jobs for the health view.
 _JOB_SQL = """
 CASE
-  WHEN message LIKE 'market closed - nepse%' OR nepse_source = 'nepalstock_official'
-       OR nepse_source LIKE 'nepsetrading%'
-       OR (nepse_source LIKE 'merolagani%' AND nepse_source <> 'merolagani_floor_sheet_history')
+  WHEN message LIKE 'market closed - nepse%' OR source = 'nepalstock_official'
+       OR source LIKE 'nepsetrading%'
+       OR (source LIKE 'merolagani%' AND source <> 'merolagani_floor_sheet_history')
     THEN 'live_index'
-  WHEN nepse_source = 'none' OR nepse_source IS NULL THEN 'news_scraper'
-  ELSE nepse_source
+  WHEN source = 'none' OR source IS NULL THEN 'news_scraper'
+  ELSE source
 END
 """
 
@@ -41,16 +41,17 @@ _JOB_LABELS = {
 }
 
 
-def _log_dict(r: PipelineRunLog) -> dict[str, Any]:
+def _log_dict(r: PipelineRun) -> dict[str, Any]:
+    # Response keys keep their original names (the dashboard reads them).
     return {
         "id": r.id,
         "status": r.status,
         "message": r.message,
         "error_text": r.error_text,
-        "news_total": int(r.news_total or 0),
-        "news_inserted": int(r.news_inserted or 0),
-        "nepse_records": int(r.nepse_records or 0),
-        "nepse_source": r.nepse_source,
+        "news_total": int(r.articles_found or 0),
+        "news_inserted": int(r.articles_inserted or 0),
+        "nepse_records": int(r.records_written or 0),
+        "nepse_source": r.source,
         "started_at": to_iso(r.started_at),
         "finished_at": to_iso(r.finished_at),
         "duration_ms": int(r.duration_ms or 0),
@@ -59,7 +60,7 @@ def _log_dict(r: PipelineRunLog) -> dict[str, Any]:
 
 
 class PipelineLogService:
-    """Pipeline run log queries against nepse_common.models.PipelineRunLog."""
+    """Pipeline run log queries against nepse_common.models.PipelineRun."""
 
     def __init__(self, db: Session) -> None:
         self._db = db
@@ -68,18 +69,18 @@ class PipelineLogService:
         self, limit: int, status: str = "all", source: str = "", include_skipped: bool = True
     ) -> dict[str, Any]:
         """Matches old GET /dashboard/pipeline-logs, plus filters: status
-        (all/success/failed), an exact nepse_source, and hiding the
+        (all/success/failed), an exact source, and hiding the
         market-closed skip rows."""
-        stmt = select(PipelineRunLog)
+        stmt = select(PipelineRun)
         if status in ("success", "failed"):
-            stmt = stmt.where(PipelineRunLog.status == status)
+            stmt = stmt.where(PipelineRun.status == status)
         if source:
-            stmt = stmt.where(PipelineRunLog.nepse_source == source)
+            stmt = stmt.where(PipelineRun.source == source)
         if not include_skipped:
             stmt = stmt.where(
-                or_(PipelineRunLog.message.is_(None), ~PipelineRunLog.message.startswith(_SKIPPED_PREFIX))
+                or_(PipelineRun.message.is_(None), ~PipelineRun.message.startswith(_SKIPPED_PREFIX))
             )
-        stmt = stmt.order_by(PipelineRunLog.started_at.desc().nulls_last(), PipelineRunLog.id.desc()).limit(limit)
+        stmt = stmt.order_by(PipelineRun.started_at.desc().nulls_last(), PipelineRun.id.desc()).limit(limit)
         logs = [_log_dict(r) for r in self._db.execute(stmt).scalars().all()]
 
         success = sum(1 for item in logs if item["status"] == "success")
@@ -99,13 +100,13 @@ class PipelineLogService:
         rows = self._db.execute(
             text(
                 """
-                SELECT DISTINCT nepse_source FROM pipeline_run_logs
-                WHERE started_at >= now() - interval '30 days' AND nepse_source IS NOT NULL
+                SELECT DISTINCT source FROM pipeline_run
+                WHERE started_at >= now() - interval '30 days' AND source IS NOT NULL
                 ORDER BY 1
                 """
             )
         ).all()
-        return [r.nepse_source for r in rows]
+        return [r.source for r in rows]
 
     def get_health(self, hours: int) -> dict[str, Any]:
         """Per job over the last `hours`: runs that did work, skips, failures,
@@ -118,7 +119,7 @@ class PipelineLogService:
                 WITH w AS (
                     SELECT *, {_JOB_SQL} AS job,
                            coalesce(status = 'success' AND message LIKE '{_SKIPPED_PREFIX}%', false) AS skipped
-                    FROM pipeline_run_logs
+                    FROM pipeline_run
                     WHERE started_at >= now() - make_interval(hours => :hours)
                 )
                 SELECT job,
@@ -130,8 +131,8 @@ class PipelineLogService:
                        max(started_at) FILTER (WHERE status <> 'success') AS last_failed,
                        (array_agg(coalesce(error_text, message) ORDER BY started_at DESC)
                            FILTER (WHERE status <> 'success'))[1] AS last_error,
-                       sum(nepse_records) FILTER (WHERE status = 'success') AS records,
-                       sum(news_inserted) FILTER (WHERE status = 'success') AS news_inserted
+                       sum(records_written) FILTER (WHERE status = 'success') AS records,
+                       sum(articles_inserted) FILTER (WHERE status = 'success') AS news_inserted
                 FROM w GROUP BY job
                 """
             ),
@@ -140,8 +141,8 @@ class PipelineLogService:
         sources = self._db.execute(
             text(
                 f"""
-                SELECT {_JOB_SQL} AS job, nepse_source, count(*) AS runs
-                FROM pipeline_run_logs
+                SELECT {_JOB_SQL} AS job, source, count(*) AS runs
+                FROM pipeline_run
                 WHERE started_at >= now() - make_interval(hours => :hours)
                   AND status = 'success' AND coalesce(message, '') NOT LIKE '{_SKIPPED_PREFIX}%'
                 GROUP BY 1, 2
@@ -151,7 +152,7 @@ class PipelineLogService:
         ).all()
         by_job: dict[str, dict[str, int]] = {}
         for s in sources:
-            by_job.setdefault(s.job, {})[s.nepse_source or "none"] = int(s.runs)
+            by_job.setdefault(s.job, {})[s.source or "none"] = int(s.runs)
 
         # Longest silence between consecutive runs of a job (skips count as
         # runs). The minute jobs log every minute around the clock, so a long
@@ -166,7 +167,7 @@ class PipelineLogService:
                     SELECT DISTINCT ON (job) job, gap, started_at FROM (
                         SELECT {_JOB_SQL} AS job, started_at,
                                started_at - lag(started_at) OVER (PARTITION BY {_JOB_SQL} ORDER BY started_at) AS gap
-                        FROM pipeline_run_logs
+                        FROM pipeline_run
                         WHERE started_at >= now() - make_interval(hours => :hours)
                     ) g
                     WHERE gap IS NOT NULL

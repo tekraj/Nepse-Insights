@@ -1,5 +1,5 @@
-"""Idempotent bulk upserts for the research tables (nepse_index_daily,
-nepse_stock_daily, nepse_intraday_tick, nepse_security).
+"""Idempotent bulk upserts for the research tables (market_index_daily,
+market_stock_daily, market_intraday_tick, market_security, market_broker).
 
 Shared here (rather than living in one service's activities) because both
 nepse-service's Temporal activities and scripts/nepsealpha-scraper/
@@ -19,11 +19,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from nepse_common.models import (
-    NepseBroker,
-    NepseIndexDaily,
-    NepseIntradayTick,
-    NepseSecurity,
-    NepseStockDaily,
+    MarketBroker,
+    MarketIndexDaily,
+    MarketIntradayTick,
+    MarketSecurity,
+    MarketStockDaily,
 )
 
 SOURCE_RANK = {"csv": 0, "merolagani": 1, "nepalstock": 2}
@@ -53,13 +53,13 @@ def _dedupe(rows: Sequence[dict[str, Any]], key_fields: tuple[str, ...]) -> list
 
 def upsert_index_daily(session: Session, rows: Sequence[dict[str, Any]], source: str) -> int:
     """rows: dicts with index_name, trade_date, open, high, low, close and
-    optionally volume, turnover, total_transactions."""
+    optionally volume, turnover, trade_count."""
     rows = _dedupe(rows, ("index_name", "trade_date"))
     if not rows:
         return 0
 
-    table = NepseIndexDaily.__table__
-    value_cols = ("open", "high", "low", "close", "volume", "turnover", "total_transactions")
+    table = MarketIndexDaily.__table__
+    value_cols = ("open", "high", "low", "close", "volume", "turnover", "trade_count")
     affected = 0
     for chunk in _chunks(rows):
         records = [
@@ -71,7 +71,7 @@ def upsert_index_daily(session: Session, rows: Sequence[dict[str, Any]], source:
             index_elements=["index_name", "trade_date"],
             set_={
                 # Keep values a lower-detail source doesn't have (e.g. merolagani
-                # has no total_transactions) instead of nulling them out.
+                # has no trade_count) instead of nulling them out.
                 **{c: _coalesce_excluded(stmt, table, c) for c in value_cols},
                 "source": stmt.excluded.source,
                 "updated_at": func.now(),
@@ -84,14 +84,14 @@ def upsert_index_daily(session: Session, rows: Sequence[dict[str, Any]], source:
 
 def upsert_stock_daily_raw(session: Session, rows: Sequence[dict[str, Any]], source: str) -> int:
     """Raw (unadjusted) daily bars. rows: dicts with symbol, trade_date,
-    open, high, low, close, volume and optionally turnover, total_trades,
+    open, high, low, close, volume and optionally turnover, trade_count,
     security_id."""
     rows = _dedupe(rows, ("symbol", "trade_date"))
     if not rows:
         return 0
 
-    table = NepseStockDaily.__table__
-    value_cols = ("security_id", "open", "high", "low", "close", "volume", "turnover", "total_trades")
+    table = MarketStockDaily.__table__
+    value_cols = ("security_id", "open", "high", "low", "close", "volume", "turnover", "trade_count")
     affected = 0
     for chunk in _chunks(rows):
         records = [
@@ -120,7 +120,7 @@ def upsert_stock_daily_adjusted(session: Session, rows: Sequence[dict[str, Any]]
     if not rows:
         return 0
 
-    table = NepseStockDaily.__table__
+    table = MarketStockDaily.__table__
     adj_cols = ("adj_open", "adj_high", "adj_low", "adj_close")
     affected = 0
     for chunk in _chunks(rows):
@@ -145,7 +145,7 @@ def upsert_intraday_ticks(session: Session, rows: Sequence[dict[str, Any]]) -> i
     if not rows:
         return 0
 
-    table = NepseIntradayTick.__table__
+    table = MarketIntradayTick.__table__
     value_cols = ("instrument_type", "price", "volume", "source")
     affected = 0
     for chunk in _chunks(rows):
@@ -163,8 +163,8 @@ def upsert_securities(session: Session, rows: Sequence[dict[str, Any]]) -> int:
     if not rows:
         return 0
 
-    table = NepseSecurity.__table__
-    value_cols = ("symbol", "security_name", "company_name", "sector_name", "instrument_type", "status")
+    table = MarketSecurity.__table__
+    value_cols = ("symbol", "security_name", "company_name", "sector_name", "instrument_type", "listing_status")
     affected = 0
     for chunk in _chunks(rows):
         stmt = pg_insert(table).values([{"security_id": r["security_id"], **{c: r.get(c) for c in value_cols}} for r in chunk])
@@ -178,18 +178,18 @@ def upsert_securities(session: Session, rows: Sequence[dict[str, Any]]) -> int:
 
 
 def upsert_brokers(session: Session, rows: Sequence[dict[str, Any]]) -> int:
-    """rows: dicts with member_code, member_name, active_status,
-    membership_type, is_dealer, nepse_member_id. The official list wins:
+    """rows: dicts with broker_code, broker_name, active_status,
+    membership_type, is_dealer, nepse_internal_id. The official list wins:
     every field is overwritten."""
-    rows = _dedupe(rows, ("member_code",))
+    rows = _dedupe(rows, ("broker_code",))
     if not rows:
         return 0
 
-    table = NepseBroker.__table__
-    value_cols = ("member_name", "active_status", "membership_type", "is_dealer", "nepse_member_id")
-    stmt = pg_insert(table).values([{"member_code": r["member_code"], **{c: r.get(c) for c in value_cols}} for r in rows])
+    table = MarketBroker.__table__
+    value_cols = ("broker_name", "active_status", "membership_type", "is_dealer", "nepse_internal_id")
+    stmt = pg_insert(table).values([{"broker_code": r["broker_code"], **{c: r.get(c) for c in value_cols}} for r in rows])
     stmt = stmt.on_conflict_do_update(
-        index_elements=["member_code"],
+        index_elements=["broker_code"],
         set_={**{c: getattr(stmt.excluded, c) for c in value_cols}, "updated_at": func.now()},
     )
     return session.execute(stmt).rowcount or 0

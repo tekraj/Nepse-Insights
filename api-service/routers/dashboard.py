@@ -102,7 +102,7 @@ def dashboard_news_detail(
 def dashboard_pipeline_logs(
     limit: int = Query(default=100, ge=1, le=1000),
     status_filter: str = Query(default="all", alias="status", description="all / success / failed"),
-    source: str = Query(default="", description="exact nepse_source"),
+    source: str = Query(default="", description="exact pipeline_run.source"),
     include_skipped: bool = Query(default=True, description="include market-closed skip rows"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:

@@ -72,7 +72,7 @@ import requests
 class RankedUrl:
     url: str
     # Higher = likely older. 0 when the portal has no reliable per-URL age
-    # signal at discovery time (see HistoricalBackfillUrl.discovery_rank).
+    # signal at discovery time (see NewsBackfillUrl.discovery_rank).
     rank: int = 0
 
 _HEADERS = {

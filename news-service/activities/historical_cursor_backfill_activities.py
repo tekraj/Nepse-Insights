@@ -10,7 +10,7 @@ from temporalio import activity
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
-from nepse_common.models import HistoricalBackfillUrl, HistoricalCursorState
+from nepse_common.models import NewsBackfillUrl, NewsBackfillCursor
 from nepse_common.schemas.scraped import ScrapedArticle
 
 from scraper.historical_article_extractor import extract_article
@@ -30,7 +30,7 @@ async def get_cursor_state_activity() -> dict[str, Any]:
     config = load_app_config()
 
     with session_scope(config.database) as session:
-        row = session.get(HistoricalCursorState, SOURCE)
+        row = session.get(NewsBackfillCursor, SOURCE)
         if row is None:
             return {"cursor": None, "exhausted": False}
         return {"cursor": row.cursor, "exhausted": row.exhausted}
@@ -45,7 +45,7 @@ async def save_cursor_state_activity(next_cursor: str | None) -> None:
 
     with session_scope(config.database) as session:
         stmt = (
-            pg_insert(HistoricalCursorState)
+            pg_insert(NewsBackfillCursor)
             .values(
                 source=SOURCE,
                 cursor=next_cursor,
@@ -87,10 +87,10 @@ async def fetch_cursor_listing_page_activity(cursor: str | None, timeout: int) -
     if records:
         with session_scope(config.database) as session:
             stmt = (
-                pg_insert(HistoricalBackfillUrl)
+                pg_insert(NewsBackfillUrl)
                 .values(records)
                 .on_conflict_do_nothing(index_elements=["source", "url"])
-                .returning(HistoricalBackfillUrl.id)
+                .returning(NewsBackfillUrl.id)
             )
             result = session.execute(stmt)
             newly_queued = len(result.fetchall())
@@ -115,12 +115,12 @@ async def claim_next_pending_sharesansar_url_activity() -> dict[str, Any] | None
 
     with session_scope(config.database) as session:
         stmt = (
-            select(HistoricalBackfillUrl)
+            select(NewsBackfillUrl)
             .where(
-                HistoricalBackfillUrl.source == SOURCE,
-                HistoricalBackfillUrl.status == "pending",
+                NewsBackfillUrl.source == SOURCE,
+                NewsBackfillUrl.status == "pending",
             )
-            .order_by(HistoricalBackfillUrl.id)
+            .order_by(NewsBackfillUrl.id)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -165,7 +165,7 @@ async def fetch_and_classify_sharesansar_url_activity(
     )
 
     with session_scope(config.database) as session:
-        row = session.get(HistoricalBackfillUrl, url_id)
+        row = session.get(NewsBackfillUrl, url_id)
         if row is None:
             return {"status": "missing_row", "article": None}
 

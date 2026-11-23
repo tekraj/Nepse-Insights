@@ -22,7 +22,7 @@ _DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 @workflow.defn
 class NepseSectorSummaryScrapeWorkflow:
     """Scrapes the sector-wise turnover/volume/transaction summary from
-    nepalstock.com.np and writes to nepse_sector_summary. Gated to market
+    nepalstock.com.np and writes to market_sector_snapshot. Gated to market
     hours (see NepseTodayPriceScrapeWorkflow for the rationale) and split
     into its own workflow/schedule for the same partial-failure-isolation
     reasons."""

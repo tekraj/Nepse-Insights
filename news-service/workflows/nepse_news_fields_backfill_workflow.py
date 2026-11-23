@@ -22,7 +22,7 @@ _BATCH_ITEM_PAUSE_SECONDS = 3
 
 @workflow.defn
 class NepseNewsFieldsBackfillTickWorkflow:
-    """One-time cleanup pass over existing nepse_news rows that are
+    """One-time cleanup pass over existing news_article rows that are
     missing published_at and/or body (root cause: several live scrapers'
     CSS selectors had gone stale against current site markup, and one
     source, nepalipaisa, never had body in its server-rendered HTML at
@@ -35,7 +35,7 @@ class NepseNewsFieldsBackfillTickWorkflow:
     historical sitemap/cursor backfill tickers.
 
     Unlike that backfill, there is no separate work-queue table here --
-    each tick queries nepse_news directly for rows still missing a field,
+    each tick queries news_article directly for rows still missing a field,
     among sources this worker has a fix for (see
     scraper.nepse_news_fields_backfill.SUPPORTED_SOURCES). A row is simply
     left alone (still eligible, re-claimed next tick) if its fetch fails,
@@ -88,7 +88,7 @@ class NepseNewsFieldsBackfillTickWorkflow:
 
 @workflow.defn
 class NepseNewsFieldsBackfillStatusWorkflow:
-    """Read-only status check: how many nepse_news rows still need
+    """Read-only status check: how many news_article rows still need
     published_at/body backfill, broken down by source, split into
     "claimable" (still eligible) and "given_up" (hit the attempt limit --
     see MAX_BACKFILL_ATTEMPTS)."""

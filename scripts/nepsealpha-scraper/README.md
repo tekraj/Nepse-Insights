@@ -1,6 +1,6 @@
 # NEPSE historical index data scraper
 
-Fills gaps in the `nepse_index` table for NEPSE main index + sectors that
+Fills gaps in the `market_index_snapshot` table for NEPSE main index + sectors that
 either have no deep history yet, or have a mid-history gap between the
 checked-in CSV exports (2021-01-16 to ~2026-01-14) and when live scraping
 started (2026-06-29).
@@ -13,10 +13,10 @@ is powered by a plain server-side DataTables JSON endpoint
 browser, no manual challenge-solving. This is the script to use.
 
 ```bash
+uv sync                          # once, from the repo root: the project venv (.venv), see pyproject.toml
+source .venv/bin/activate
 cd scripts/nepsealpha-scraper
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
-./venv/bin/python scrape_sharesansar.py
+python scrape_sharesansar.py
 ```
 
 It runs unattended, paginating through each symbol/date-range job and
@@ -53,11 +53,11 @@ the export control's selector from them, then automates the rest of the
 jobs using that selector.
 
 ```bash
+uv sync --extra scripts          # once, from the repo root: adds Playwright to .venv
+source .venv/bin/activate
+python -m playwright install chromium
 cd scripts/nepsealpha-scraper
-python3 -m venv venv
-./venv/bin/pip install playwright
-./venv/bin/python -m playwright install chromium
-./venv/bin/python scrape_nepsealpha.py
+python scrape_nepsealpha.py
 ```
 
 This needs a real display (run it on your own machine, not a headless
@@ -80,7 +80,7 @@ To re-derive this list yourself:
 ```bash
 docker exec nepse-postgres-db psql -U superset -d nepse -c "
 SELECT index_name, min(scraped_at)::date, max(scraped_at)::date
-FROM nepse_index GROUP BY index_name ORDER BY index_name;"
+FROM market_index_snapshot GROUP BY index_name ORDER BY index_name;"
 ```
 
 sharesansar's own numeric `index_id` values (from its `<select name="index">`
@@ -90,11 +90,11 @@ on `/index-history-data`) are hardcoded per job in `scrape_sharesansar.py`'s
 ## After downloading
 
 Run the seeding script to import everything (existing CSVs + newly
-downloaded ones) into `nepse_index`, deduping against what's already there:
+downloaded ones) into `market_index_snapshot`, deduping against what's already there:
 
 ```bash
-cd ../../nepse-common   # or wherever your venv with nepse-common installed lives
-python ../scripts/nepsealpha-scraper/seed_from_csv.py
+# from the repo root; the DB is reached through the port docker compose publishes
+POSTGRES_HOST=localhost .venv/bin/python scripts/nepsealpha-scraper/seed_from_csv.py
 ```
 
 See that script's own docstring for details.

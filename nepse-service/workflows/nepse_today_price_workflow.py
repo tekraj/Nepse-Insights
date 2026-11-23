@@ -19,7 +19,7 @@ _DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 @workflow.defn
 class NepseTodayPriceScrapeWorkflow:
     """Scrapes today's price for all listed securities from
-    nepalstock.com.np and writes to nepse_today_price.
+    nepalstock.com.np and writes to market_price_snapshot.
 
     Gated to market hours (is_market_open_activity, same check
     NepseIndexScrapeWorkflow uses) -- today's price is meaningless/static
@@ -28,7 +28,7 @@ class NepseTodayPriceScrapeWorkflow:
     clock. Split into its own workflow (rather than folded into one
     combined "scrape everything" workflow) so a failure here doesn't block
     floor-sheet/sector-summary/market-depth from writing their own
-    pipeline_run_logs row -- same partial-failure-isolation rationale as
+    pipeline_run row -- same partial-failure-isolation rationale as
     NewsScrapeWorkflow vs NepseIndexScrapeWorkflow already being split.
     """
 

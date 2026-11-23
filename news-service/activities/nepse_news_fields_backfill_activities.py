@@ -35,11 +35,11 @@ def _needs_backfill_filter():
 
 @activity.defn
 async def claim_next_fields_backfill_row_activity() -> dict[str, Any] | None:
-    """Atomically claims one nepse_news row missing published_at and/or
+    """Atomically claims one news_article row missing published_at and/or
     body, from a source this worker knows how to fix (SUPPORTED_SOURCES),
     returning {id, source, url, needs_published_at, needs_body} or None if
     there's nothing left to claim. Nothing to update-and-mark-processing
-    here the way historical_backfill_urls works -- this activity just
+    here the way news_backfill_url works -- this activity just
     reads and returns candidate info; the actual UPDATE happens in
     apply_fields_backfill_activity once the fetch succeeds, so a claim
     that never gets processed (crash mid-tick) simply remains eligible to

@@ -12,7 +12,7 @@ import { useApi, useLogout } from "../lib/useApi";
 
 // Candlestick chart with drawing tools (KLineChart) for positional trading:
 // hourly candles for entries, daily/weekly/monthly for the trend. Bars come
-// from /dashboard/candles (nepse_intraday_tick for 1H, the daily tables
+// from /dashboard/candles (market_intraday_tick for 1H, the daily tables
 // otherwise, plus today's live scrapes while a session runs).
 const TIMEFRAMES = [
   { value: "1h", label: "1H", title: "Hourly candles (4 per session)" },

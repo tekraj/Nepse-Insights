@@ -9,7 +9,7 @@ from temporalio import activity
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
-from nepse_common.models import HistoricalIdWalkCursor
+from nepse_common.models import NewsBackfillIdwalkCursor
 from nepse_common.schemas.scraped import ScrapedArticle
 
 from scraper.historical_idwalk_discovery import PORTALS_BY_SOURCE
@@ -40,14 +40,14 @@ async def get_next_idwalk_id_activity(source: str) -> dict[str, Any] | None:
     past the last ID a site has ever issued) -- the real stop condition is
     date-driven: fetch_and_classify_idwalk_id_activity marks the cursor
     exhausted once a fetched article's published_at reaches the portal's
-    own most-recent coverage in nepse_news (see REACHED_PRESENT_DATES),
+    own most-recent coverage in news_article (see REACHED_PRESENT_DATES),
     since the goal is to close the gap from 2014 up to wherever this
     source's data already continues (live scraping keeps that at ~today).
     A static end ID can't be calibrated reliably that far out -- post
     rate isn't constant over a decade -- so the date check is authoritative
     and this function's own range_end bound is deliberately generous.
 
-    Unlike historical_backfill_urls's claim/queue model, there is no
+    Unlike news_backfill_url's claim/queue model, there is no
     separate discovery phase here -- fetching an ID IS the only way to
     learn whether it's a real article, so this simply hands out "the next
     ID to try" without knowing in advance if it exists. The actual
@@ -60,9 +60,9 @@ async def get_next_idwalk_id_activity(source: str) -> dict[str, Any] | None:
     config = load_app_config()
 
     with session_scope(config.database) as session:
-        row = session.get(HistoricalIdWalkCursor, source)
+        row = session.get(NewsBackfillIdwalkCursor, source)
         if row is None:
-            row = HistoricalIdWalkCursor(source=source, next_id=spec.id_range_start, exhausted=False)
+            row = NewsBackfillIdwalkCursor(source=source, next_id=spec.id_range_start, exhausted=False)
             session.add(row)
             session.flush()
 
@@ -84,7 +84,7 @@ async def get_next_idwalk_id_activity(source: str) -> dict[str, Any] | None:
 async def fetch_and_classify_idwalk_id_activity(source: str, article_id: int, timeout: int) -> dict[str, Any]:
     """Fetches one numeric ID for `source`, classifies it by published_at
     against the fixed backfill window, and returns an outcome. Does NOT
-    write to nepse_news itself (same separation as the sitemap/cursor
+    write to news_article itself (same separation as the sitemap/cursor
     backfills, so the caller can batch/validate through the same
     ScrapedArticle path the live pipeline uses).
 
@@ -112,7 +112,7 @@ async def fetch_and_classify_idwalk_id_activity(source: str, article_id: int, ti
     ):
         config = load_app_config()
         with session_scope(config.database) as session:
-            row = session.get(HistoricalIdWalkCursor, source)
+            row = session.get(NewsBackfillIdwalkCursor, source)
             if row is not None:
                 row.exhausted = True
         return {"status": "caught_up", "article": None}
@@ -147,7 +147,7 @@ async def get_idwalk_progress_activity() -> dict[str, dict[str, Any]]:
     with session_scope(config.database) as session:
         progress: dict[str, dict[str, Any]] = {}
         for source in ID_WALK_SOURCES:
-            row = session.get(HistoricalIdWalkCursor, source)
+            row = session.get(NewsBackfillIdwalkCursor, source)
             spec = PORTALS_BY_SOURCE[source]
             if row is None:
                 progress[source] = {

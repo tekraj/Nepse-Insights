@@ -1,0 +1,71 @@
+# Development environment for the whole platform: ONE virtualenv with the
+# dependencies of every Python service, the shared nepse-common package
+# (installed editable, so model/config changes apply without reinstalling) and
+# the one-off scripts. Use it to run and test the services without Docker.
+#
+#   uv sync                      # creates .venv on Python 3.14 (.python-version), like the images
+#   uv sync --extra scripts      # + Playwright for scripts/nepsealpha-scraper
+#   source .venv/bin/activate
+#
+#   without uv:  python3.14 -m venv .venv
+#                .venv/bin/pip install -e ./nepse-common -e .   (or -e ".[scripts]")
+#
+# The Docker images do NOT read this file: each service installs its own
+# <service>/pyproject.toml (see its Dockerfile). The pins below repeat those
+# files -- when a service's dependencies change, change them in both places.
+#
+# This project ships no code (the services run from their directories, e.g.
+# `cd nepse-service && python worker.py`); it only declares dependencies.
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nepse-data-platform"
+version = "0.1.0"
+description = "NEPSE market-crash research data platform: market/news collectors, API and dashboard (development environment)."
+requires-python = ">=3.14"
+dependencies = [
+    # Shared config, ORM models, schemas and Alembic migrations (every service).
+    # Resolved from ./nepse-common, never from PyPI -- see [tool.uv.sources].
+    "nepse-common",
+
+    # Temporal client/worker (nepse-service, news-service, api-service).
+    "temporalio",
+
+    # Scraping HTTP stack (nepse-service, news-service).
+    "requests==2.32.3",
+    "beautifulsoup4==4.12.3",
+    "pytz==2024.1",
+
+    # nepse-service: runs nepalstock's nepse.wasm to derive API tokens.
+    "wasmtime==27.0.2",
+
+    # news-service.
+    "lxml==6.1.3",
+    "nepali-datetime==1.0.8.5",
+
+    # api-service.
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.6",
+    "pyjwt==2.9.0",
+]
+
+[project.optional-dependencies]
+# One-off tools under scripts/ (requests comes from the base set above).
+# After installing, fetch the browser once: `python -m playwright install chromium`.
+scripts = [
+    "playwright>=1.40,<2.0",  # scripts/nepsealpha-scraper/scrape_nepsealpha.py
+]
+
+[tool.setuptools]
+# Dependencies only: nothing from this directory is installed as a package.
+packages = []
+
+[tool.uv]
+# Virtual project: `uv sync` installs the dependencies without building this one.
+package = false
+
+[tool.uv.sources]
+nepse-common = { path = "nepse-common", editable = true }

@@ -17,11 +17,11 @@ _DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 
 @workflow.defn
 class NewsScrapeWorkflow:
-    """Scrapes all 20 news portals and writes results to nepse_news.
+    """Scrapes all 20 news portals and writes results to news_article.
 
     Mirrors the news-only portion of the old run_pipeline() in
     scheduler.py, including the try/except/finally structure: activity
-    failures are caught so a failed pipeline_run_logs row is still written,
+    failures are caught so a failed pipeline_run row is still written,
     and the workflow returns an error summary dict instead of failing
     outright, matching the old code's resilience.
     """

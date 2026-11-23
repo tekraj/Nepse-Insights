@@ -7,7 +7,7 @@ from temporalio import activity
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
-from nepse_common.models import PipelineRunLog
+from nepse_common.models import PipelineRun
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -22,11 +22,14 @@ def _parse_dt(value: Any) -> datetime | None:
 
 @activity.defn
 async def write_pipeline_run_log_activity(log_data: dict[str, Any]) -> None:
-    """Insert a pipeline_run_logs row, mirroring old write_pipeline_run_log().
+    """Insert a pipeline_run row, mirroring old write_pipeline_run_log().
 
     started_at/finished_at arrive as ISO strings (or None) since activity
     arguments must be JSON-serializable; they are parsed back to datetime
-    here before insertion.
+    here before insertion. The payload keys predate the column names
+    (news_total -> articles_found, news_inserted -> articles_inserted,
+    nepse_records -> records_written, nepse_source -> source) and are kept
+    so in-flight workflow histories replay unchanged.
 
     Identical copy of news-service's activities/pipeline_log_activities.py
     -- each Temporal worker process in this codebase is self-contained (its
@@ -38,14 +41,14 @@ async def write_pipeline_run_log_activity(log_data: dict[str, Any]) -> None:
     config = load_app_config()
 
     with session_scope(config.database) as session:
-        row = PipelineRunLog(
+        row = PipelineRun(
             status=log_data.get("status", "failed"),
             message=log_data.get("message"),
             error_text=log_data.get("error_text"),
-            news_total=int(log_data.get("news_total", 0) or 0),
-            news_inserted=int(log_data.get("news_inserted", 0) or 0),
-            nepse_records=int(log_data.get("nepse_records", 0) or 0),
-            nepse_source=log_data.get("nepse_source"),
+            articles_found=int(log_data.get("news_total", 0) or 0),
+            articles_inserted=int(log_data.get("news_inserted", 0) or 0),
+            records_written=int(log_data.get("nepse_records", 0) or 0),
+            source=log_data.get("nepse_source"),
             started_at=_parse_dt(log_data.get("started_at")),
             finished_at=_parse_dt(log_data.get("finished_at")),
             duration_ms=int(log_data.get("duration_ms", 0) or 0),

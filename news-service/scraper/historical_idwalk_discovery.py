@@ -35,7 +35,7 @@ at reaching calendar year 2014:
 
 Each of these returns RankedUrl-shaped output (matching
 historical_sitemap_discovery.RankedUrl's shape) so the same
-historical_backfill_urls queue/claim/rank machinery applies unchanged --
+news_backfill_url queue/claim/rank machinery applies unchanged --
 "rank" here is the numeric ID itself (bounded to the portal's calibrated
 2014 bracket), which already IS the age signal, no separate ranking logic
 needed.

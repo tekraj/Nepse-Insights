@@ -115,7 +115,7 @@ def fetch_sector_summary(timeout: int = 15) -> list[dict[str, Any]]:
     """Sector-wise turnover/volume/transaction summary for the latest
     session: [{businessDate, sectorName, turnOverValues, turnOverVolume,
     totalTransaction}, ...]. GET only -- a POST (what this used to send)
-    returns HTTP 405, which is why nepse_sector_summary stayed empty."""
+    returns HTTP 405, which is why market_sector_snapshot stayed empty."""
     return _content(_get_json(_SECTORWISE_SUMMARY_PATH, timeout))
 
 

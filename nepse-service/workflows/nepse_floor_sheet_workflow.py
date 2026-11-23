@@ -19,8 +19,8 @@ _DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 @workflow.defn
 class NepseFloorSheetScrapeWorkflow:
     """Scrapes the floor sheet (all trade contracts for the current
-    session) from nepalstock.com.np and writes to nepse_floorsheet, deduped
-    by (contract_id, business_date). Gated to market hours (see
+    session) from nepalstock.com.np and writes to market_trade, deduped
+    by (contract_id, trade_date). Gated to market hours (see
     NepseTodayPriceScrapeWorkflow for the rationale) and split into its own
     workflow/schedule for the same partial-failure-isolation reasons.
 
@@ -28,7 +28,7 @@ class NepseFloorSheetScrapeWorkflow:
     is UNVERIFIED against a live nepalstock.com.np response -- see
     scraper/nepse_market_data.py module docstring. If the path is wrong
     this workflow will fail its scrape activity, get caught by the except
-    below, and log a failed pipeline_run_logs row every tick rather than
+    below, and log a failed pipeline_run row every tick rather than
     crashing the worker -- verify the path before relying on this data.
     """
 
