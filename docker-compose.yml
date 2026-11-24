@@ -74,6 +74,7 @@ services:
       - nepse-network
     depends_on:
       - db
+      - business-intelligence
 
   news-service:
     build:
@@ -105,6 +106,26 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
     volumes:
       - ./logs:/app/logs
+    networks:
+      - nepse-network
+    depends_on:
+      - db
+      - temporal
+
+  business-intelligence:
+    build:
+      context: .
+      dockerfile: business-intelligence/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Kathmandu
+      TEMPORAL_ADDRESS: temporal:7233
+    # gRPC for api-service; published on localhost only, for a dev
+    # api-service running from the venv.
+    ports:
+      - "127.0.0.1:50051:50051"
     networks:
       - nepse-network
     depends_on:

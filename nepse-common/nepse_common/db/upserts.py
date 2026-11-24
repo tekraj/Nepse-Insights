@@ -1,5 +1,6 @@
 """Idempotent bulk upserts for the research tables (market_index_daily,
-market_stock_daily, market_intraday_tick, market_security, market_broker).
+market_stock_daily, market_intraday_tick, market_security, market_broker,
+market_fundamental_daily, market_corporate_action).
 
 Shared here (rather than living in one service's activities) because both
 nepse-service's Temporal activities and scripts/nepsealpha-scraper/
@@ -14,12 +15,14 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Sequence
 
-from sqlalchemy import case, func
+from sqlalchemy import case, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from nepse_common.models import (
     MarketBroker,
+    MarketCorporateAction,
+    MarketFundamentalDaily,
     MarketIndexDaily,
     MarketIntradayTick,
     MarketSecurity,
@@ -196,3 +199,51 @@ def upsert_brokers(session: Session, rows: Sequence[dict[str, Any]]) -> int:
 
 def _coalesce_excluded(stmt, table, column: str):
     return func.coalesce(getattr(stmt.excluded, column), table.c[column])
+
+
+_FUNDAMENTAL_COLUMNS = (
+    "sector", "market_price", "eps", "eps_period", "pe_ratio", "book_value", "pbv", "cash_dividend_pct", "bonus_pct",
+    "shares_outstanding", "market_cap", "paidup_value", "high_52w", "low_52w", "avg_120d", "avg_180d",
+    "yield_1y_pct", "avg_volume_30d",
+)
+
+
+def upsert_fundamentals_daily(session: Session, rows: Sequence[dict[str, Any]], source: str = "merolagani") -> int:
+    """rows: dicts with symbol, trade_date and any of _FUNDAMENTAL_COLUMNS.
+    A re-fetch for the same session overwrites the row (the latest figures win)."""
+    rows = _dedupe(rows, ("symbol", "trade_date"))
+    if not rows:
+        return 0
+    records = [{"symbol": r["symbol"], "trade_date": r["trade_date"], "source": source,
+                **{c: r.get(c) for c in _FUNDAMENTAL_COLUMNS}} for r in rows]
+    for chunk in _chunks(records):
+        stmt = pg_insert(MarketFundamentalDaily).values(list(chunk))
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol", "trade_date"],
+            set_={**{c: stmt.excluded[c] for c in _FUNDAMENTAL_COLUMNS}, "source": stmt.excluded.source, "scraped_at": func.now()},
+        )
+        session.execute(stmt)
+    return len(records)
+
+
+def replace_corporate_actions(session: Session, symbol: str, history: dict[str, list[dict[str, Any]]]) -> int:
+    """Replace a company's cash dividend / bonus / right history with the
+    latest fetch. history: {action_type: [{fiscal_year, value_pct}, ...]} in
+    page order. A kind with no rows in the fetch keeps its stored rows
+    (an empty panel is more likely a page glitch than history disappearing)."""
+    written = 0
+    for action_type, items in history.items():
+        if not items:
+            continue
+        session.execute(delete(MarketCorporateAction).where(
+            MarketCorporateAction.symbol == symbol, MarketCorporateAction.action_type == action_type))
+        seen: dict[str, int] = {}
+        records = []
+        for item in items:
+            fy = item["fiscal_year"]
+            records.append({"symbol": symbol, "action_type": action_type, "fiscal_year": fy,
+                            "seq": seen.get(fy, 0), "value_pct": item.get("value_pct")})
+            seen[fy] = seen.get(fy, 0) + 1
+        session.execute(pg_insert(MarketCorporateAction).values(records))
+        written += len(records)
+    return written

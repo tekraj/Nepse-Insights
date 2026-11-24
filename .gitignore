@@ -15,3 +15,4 @@ data/
 # or a service project; the dev venv is .venv/ -- see pyproject.toml)
 *.egg-info/
 build/
+thesis/

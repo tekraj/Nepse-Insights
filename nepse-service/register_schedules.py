@@ -26,6 +26,7 @@ from workflows.nepse_floor_sheet_eod_workflow import NepseFloorSheetEodSweepWork
 from workflows.nepse_end_of_day_workflow import NepseEndOfDayWorkflow
 from workflows.research_history_backfill_workflow import ResearchHistoryBackfillWorkflow
 from workflows.floor_sheet_history_backfill_workflow import FloorSheetHistoryBackfillWorkflow
+from workflows.company_fundamentals_workflow import CompanyFundamentalsWorkflow
 
 _GENERAL_QUEUE = "nepse-market-queue"
 
@@ -38,6 +39,7 @@ _FLOOR_SHEET_EOD_SCHEDULE_ID = "nepse-floor-sheet-eod-sweep-schedule"
 _END_OF_DAY_SCHEDULE_ID = "nepse-end-of-day-schedule"
 _RESEARCH_BACKFILL_SCHEDULE_ID = "research-history-backfill-schedule"
 _FLOOR_SHEET_HISTORY_SCHEDULE_ID = "floor-sheet-history-backfill-schedule"
+_FUNDAMENTALS_SCHEDULE_ID = "company-fundamentals-schedule"
 
 # Temporal's ScheduleIntervalSpec grid is anchored to the Unix epoch
 # (1970-01-01 00:00 UTC) with no offset unless one is given. NPT is UTC+5:45
@@ -271,6 +273,21 @@ async def upsert_all_schedules(client: Client) -> None:
             FloorSheetHistoryBackfillWorkflow.run,
             args=[None, None, 30],
             id="floor-sheet-history-backfill-workflow",
+            task_queue=_GENERAL_QUEUE,
+        ),
+        skip_overlap,
+    )
+    # Company fundamentals (merolagani company pages) after the end-of-day
+    # job (15:40, ~12 min): P/E, P/BV etc. for today's closing prices. Skips
+    # itself on days without a session.
+    await upsert_schedule(
+        client,
+        _FUNDAMENTALS_SCHEDULE_ID,
+        ScheduleSpec(calendars=[_npt_calendar(16, 15, _SESSION_DAYS)]),
+        ScheduleActionStartWorkflow(
+            CompanyFundamentalsWorkflow.run,
+            args=[False],
+            id="company-fundamentals-workflow",
             task_queue=_GENERAL_QUEUE,
         ),
         skip_overlap,

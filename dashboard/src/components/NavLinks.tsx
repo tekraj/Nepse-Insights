@@ -7,6 +7,9 @@ const LINKS = [
   { to: "/brokers", label: "Brokers" },
   { to: "/technicals", label: "Technicals" },
   { to: "/candles", label: "Candles" },
+  { to: "/bi", label: "BI" },
+  { to: "/portfolio", label: "Portfolio" },
+  { to: "/admin/bi", label: "BI Setup" },
   { to: "/news", label: "News" },
   { to: "/logs", label: "Run Logs" },
 ];

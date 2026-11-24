@@ -1,0 +1,230 @@
+// gRPC contract between api-service (client) and the business-intelligence
+// service (server). Generated code lives next to this file
+// (business_intelligence_pb2*.py); regenerate after editing:
+//
+//   scripts/generate_bi_grpc.sh
+//
+// Envelopes are typed; nested, evolving payloads (feature parameters, the
+// report body, the catalog) travel as JSON strings so a new indicator or
+// report field needs no proto change.
+syntax = "proto3";
+
+package nepse.bi.v1;
+
+service BusinessIntelligence {
+  // Feature catalog the BI Setup page renders its form from.
+  rpc GetCatalog(GetCatalogRequest) returns (Catalog);
+
+  // Per-script setup (bi_setting).
+  rpc ListSettings(ListSettingsRequest) returns (ListSettingsResponse);
+  rpc GetSetting(SymbolRequest) returns (Setting);
+  rpc UpsertSetting(UpsertSettingRequest) returns (Setting);
+  rpc DeleteSetting(SymbolRequest) returns (DeleteSettingResponse);
+
+  // Current reports (bi_report).
+  rpc ListReports(ListReportsRequest) returns (ListReportsResponse);
+  rpc GetReport(SymbolRequest) returns (Report);
+  // Queue an immediate regeneration (a Temporal workflow).
+  rpc RefreshReport(SymbolRequest) returns (RefreshReportResponse);
+
+  // Question about a script, answered by the master agent with the
+  // report and live database data (RAG + tool use), streamed.
+  rpc Ask(AskRequest) returns (stream AskEvent);
+
+  // Portfolio optimisation for a user: progress events while the portfolio
+  // agent works, then the result (also cached in bi_portfolio). The run
+  // finishes and is saved even if the caller disconnects.
+  rpc OptimizePortfolio(PortfolioRequest) returns (stream PortfolioEvent);
+  // The user's cached latest optimisation (shown until they run a new one).
+  rpc GetPortfolio(PortfolioQuery) returns (PortfolioResult);
+
+  // Alerts (bi_notification).
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+  rpc MarkNotificationsRead(MarkNotificationsReadRequest) returns (MarkNotificationsReadResponse);
+}
+
+message GetCatalogRequest {}
+
+message Catalog {
+  string catalog_json = 1;  // {"groups": [{"id", "label", "features": [{"id", "label", "params": [...]}]}]}
+}
+
+message SymbolRequest {
+  string symbol = 1;
+}
+
+message Setting {
+  string symbol = 1;
+  bool enabled = 2;
+  string horizon = 3;        // short | medium | long
+  string risk_profile = 4;   // conservative | moderate | aggressive
+  string price_basis = 5;    // adjusted | raw
+  int32 lookback_days = 6;
+  int32 refresh_minutes_live = 7;
+  int32 refresh_minutes_offhours = 8;
+  bool technical_enabled = 9;
+  bool fundamental_enabled = 10;
+  bool news_enabled = 11;
+  bool quant_enabled = 12;
+  // {"technical": {"rsi": {"period": 14}, ...}, "fundamental": {...}, "news": {...}, "quant": {...}}
+  string features_json = 13;
+  repeated string news_keywords = 14;
+  bool alerts_enabled = 15;
+  double alert_price_change_pct = 16;
+  double alert_volume_spike_ratio = 17;
+  bool alert_on_signal_change = 18;
+  bool alert_on_news = 19;
+  bool llm_summary_enabled = 20;
+  string custom_instructions = 21;
+  // Read-only.
+  string created_at = 22;
+  string updated_at = 23;
+  string updated_by = 24;
+  string company_name = 25;
+  string sector = 26;
+}
+
+message ListSettingsRequest {}
+
+message ListSettingsResponse {
+  repeated Setting settings = 1;
+}
+
+message UpsertSettingRequest {
+  Setting setting = 1;
+  string user = 2;  // dashboard user's email, stored as updated_by
+}
+
+message DeleteSettingResponse {
+  bool deleted = 1;
+}
+
+message ReportSummary {
+  string symbol = 1;
+  string company_name = 2;
+  string sector = 3;
+  bool enabled = 4;
+  string status = 5;          // ok | partial | failed | missing
+  string recommendation = 6;
+  double score = 7;
+  double confidence = 8;
+  string headline = 9;
+  double last_price = 10;
+  string generated_at = 11;
+  string data_as_of = 12;
+}
+
+message ListReportsRequest {}
+
+message ListReportsResponse {
+  repeated ReportSummary reports = 1;
+  bool llm_enabled = 2;
+}
+
+message Report {
+  ReportSummary summary = 1;
+  bool exists = 2;
+  string report_json = 3;  // full bi_report row: synthesis, sections (with chart series), metadata
+}
+
+message RefreshReportResponse {
+  bool queued = 1;
+  string workflow_id = 2;
+  string message = 3;
+}
+
+message ChatTurn {
+  string role = 1;  // user | assistant
+  string content = 2;
+}
+
+message AskRequest {
+  string symbol = 1;
+  string question = 2;
+  repeated ChatTurn history = 3;  // earlier turns of this conversation, oldest first
+  string user = 4;
+}
+
+message ToolStatus {
+  string name = 1;
+  string label = 2;   // human-readable, e.g. "Searching news for NABIL"
+  string state = 3;   // running | done | error
+}
+
+message AskDone {
+  string model = 1;
+  int32 input_tokens = 2;
+  int32 output_tokens = 3;
+  repeated string sources = 4;  // tools/data the answer drew on
+}
+
+message AskEvent {
+  oneof event {
+    string text_delta = 1;
+    ToolStatus tool = 2;
+    AskDone done = 3;
+    string error = 4;
+  }
+}
+
+message Notification {
+  int64 id = 1;
+  string symbol = 2;
+  string kind = 3;
+  string severity = 4;
+  string title = 5;
+  string body = 6;
+  string data_json = 7;
+  string created_at = 8;
+  bool read = 9;
+}
+
+message ListNotificationsRequest {
+  string symbol = 1;     // empty = all scripts
+  bool unread_only = 2;
+  int32 limit = 3;
+}
+
+message ListNotificationsResponse {
+  repeated Notification notifications = 1;
+  int32 unread_count = 2;
+}
+
+message MarkNotificationsReadRequest {
+  repeated int64 ids = 1;
+  bool all = 2;          // every unread (optionally only `symbol`'s)
+  string symbol = 3;
+}
+
+message MarkNotificationsReadResponse {
+  int32 updated = 1;
+}
+
+message PortfolioRequest {
+  string user = 1;          // dashboard user's email
+  string request_json = 2;  // {budget, horizon, target_return_pct, risk_profile, universe, universe_size,
+                            //  max_weight_pct, max_sector_pct, lot_size, cost_pct, holdings: [{symbol, quantity}], exclude}
+}
+
+message PortfolioProgress {
+  string stage = 1;
+  string message = 2;
+  double fraction = 3;  // 0..1
+}
+
+message PortfolioEvent {
+  oneof event {
+    PortfolioProgress progress = 1;
+    string portfolio_json = 2;  // final bi_portfolio row (request, result, status, timings)
+    string error = 3;
+  }
+}
+
+message PortfolioQuery {
+  string user = 1;
+}
+
+message PortfolioResult {
+  bool exists = 1;
+  string portfolio_json = 2;
+}

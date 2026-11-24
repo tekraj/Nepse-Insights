@@ -1,0 +1,35 @@
+# Dependencies of the business-intelligence container (agents + gRPC server).
+# The Dockerfile installs nepse-common first, then `pip install`s this file,
+# which pulls in the dependencies below; "nepse-common" is satisfied by that
+# first install.
+#
+# The service's code is not installed as a package: it runs from its
+# directory (`python main.py`), so this project ships no modules.
+#
+# The root pyproject.toml (development venv) repeats these pins -- when you
+# change them here, change them there too.
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "business-intelligence"
+version = "0.1.0"
+description = "Business-intelligence agents (technical, fundamental, news, quant + master) for configured NEPSE scripts, served over gRPC."
+requires-python = ">=3.14"
+dependencies = [
+    "nepse-common",
+    "temporalio",
+    "openai==3.57.0",  # generic OpenAI-compatible client (any provider via BI_LLM_BASE_URL)
+    "grpcio==1.85.3",
+    "numpy==2.5.5",
+    "scipy==1.18.1",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.uv.sources]
+# Only for a stand-alone `uv sync` in this directory; pip (Docker) ignores it.
+nepse-common = { path = "../nepse-common", editable = true }

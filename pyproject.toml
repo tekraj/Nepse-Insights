@@ -1,5 +1,6 @@
 # Development environment for the whole platform: ONE virtualenv with the
-# dependencies of every Python service, the shared nepse-common package
+# dependencies of every Python service (nepse-service, news-service,
+# api-service, business-intelligence), the shared nepse-common package
 # (installed editable, so model/config changes apply without reinstalling) and
 # the one-off scripts. Use it to run and test the services without Docker.
 #
@@ -50,6 +51,15 @@ dependencies = [
     "fastapi==0.115.0",
     "uvicorn[standard]==0.30.6",
     "pyjwt==2.9.0",
+
+    # api-service <-> business-intelligence (gRPC).
+    "grpcio==1.85.3",
+
+    # business-intelligence: generic OpenAI-compatible LLM client for the
+    # agents, numerics for the technical/quantitative analysis.
+    "openai==3.57.0",
+    "numpy==2.5.5",
+    "scipy==1.18.1",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +67,12 @@ dependencies = [
 # After installing, fetch the browser once: `python -m playwright install chromium`.
 scripts = [
     "playwright>=1.40,<2.0",  # scripts/nepsealpha-scraper/scrape_nepsealpha.py
+]
+
+[dependency-groups]
+# Development tools, installed by `uv sync` (pip: `pip install grpcio-tools==1.85.3`).
+dev = [
+    "grpcio-tools==1.85.3",  # scripts/generate_bi_grpc.sh regenerates the gRPC stubs
 ]
 
 [tool.setuptools]

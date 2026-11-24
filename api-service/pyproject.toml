@@ -23,6 +23,7 @@ dependencies = [
     "uvicorn[standard]==0.30.6",
     "pyjwt==2.9.0",
     "temporalio",
+    "grpcio==1.85.3",  # client of the business-intelligence service
 ]
 
 [tool.setuptools]

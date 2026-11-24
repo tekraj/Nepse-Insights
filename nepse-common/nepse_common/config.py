@@ -76,10 +76,44 @@ class AuthConfig:
 
 
 @dataclass(frozen=True)
+class BiConfig:
+    """business-intelligence service (agents + gRPC) and its api-service client."""
+    # gRPC: the port the service listens on, and the address api-service dials.
+    grpc_port: int
+    grpc_address: str
+    # LLM for the agents, through the generic OpenAI-compatible Chat
+    # Completions API (the `openai` library): OpenAI itself, or any
+    # compatible server via llm_base_url (Ollama, vLLM, LM Studio,
+    # OpenRouter, Azure, ...). Without a model (and a key or base URL) the
+    # agents still run and write deterministic, rule-based summaries, and
+    # Q&A answers that the LLM is not configured.
+    llm_base_url: str
+    llm_api_key: str
+    llm_model: str
+    llm_enabled: bool
+    # Structured output request style: json_schema (strict schema),
+    # json_object (JSON mode) or none (schema in the prompt only); the
+    # client steps down automatically when a server rejects one.
+    llm_json_mode: str
+    llm_temperature: float | None
+    llm_max_tokens: int | None
+    # Automation cadence: the refresh sweep looks for due reports every
+    # report_sweep_minutes; the monitor checks prices/news every
+    # monitor_interval_minutes. A report is due when its symbol's
+    # refresh_minutes_live / refresh_minutes_offhours (bi_setting) elapsed,
+    # its setting changed, or the monitor saw an alert-worthy event.
+    report_sweep_minutes: int
+    monitor_interval_minutes: int
+    report_concurrency: int
+    automation_enabled: bool
+
+
+@dataclass(frozen=True)
 class AppConfig:
     database: DatabaseConfig
     scraper: ScraperConfig
     auth: AuthConfig
+    bi: BiConfig
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -94,6 +128,26 @@ def _load_auth_config() -> AuthConfig:
         jwt_secret=os.getenv("JWT_SECRET", "dev-only-nepse-jwt-secret-change-me"),
         jwt_ttl_minutes=int(os.getenv("JWT_TTL_MINUTES", "480")),
         cookie_secure=_env_bool("COOKIE_SECURE", False),
+    )
+
+
+def _load_bi_config() -> BiConfig:
+    return BiConfig(
+        grpc_port=int(os.getenv("BI_GRPC_PORT", "50051")),
+        grpc_address=os.getenv("BI_GRPC_ADDRESS", "business-intelligence:50051"),
+        llm_base_url=os.getenv("BI_LLM_BASE_URL", "").strip(),
+        llm_api_key=(os.getenv("BI_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip(),
+        llm_model=os.getenv("BI_LLM_MODEL", "").strip(),
+        llm_enabled=_env_bool("BI_LLM_ENABLED", True)
+        and bool(os.getenv("BI_LLM_MODEL", "").strip())
+        and bool(os.getenv("BI_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("BI_LLM_BASE_URL")),
+        llm_json_mode=os.getenv("BI_LLM_JSON_MODE", "json_schema").strip(),
+        llm_temperature=float(os.environ["BI_LLM_TEMPERATURE"]) if os.getenv("BI_LLM_TEMPERATURE") else None,
+        llm_max_tokens=int(os.environ["BI_LLM_MAX_TOKENS"]) if os.getenv("BI_LLM_MAX_TOKENS") else None,
+        report_sweep_minutes=int(os.getenv("BI_REPORT_SWEEP_MINUTES", "5")),
+        monitor_interval_minutes=int(os.getenv("BI_MONITOR_INTERVAL_MINUTES", "1")),
+        report_concurrency=int(os.getenv("BI_REPORT_CONCURRENCY", "3")),
+        automation_enabled=_env_bool("BI_AUTOMATION_ENABLED", True),
     )
 
 
@@ -154,4 +208,5 @@ def load_app_config() -> AppConfig:
             floorsheet_backfill_start_date=os.getenv("FLOORSHEET_BACKFILL_START_DATE", "2026-09-15"),
         ),
         auth=_load_auth_config(),
+        bi=_load_bi_config(),
     )

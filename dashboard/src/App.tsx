@@ -10,6 +10,9 @@ import { CandlesPage } from "./pages/CandlesPage";
 import { MarketPage } from "./pages/MarketPage";
 import { OrderBookPage } from "./pages/OrderBookPage";
 import { BrokersPage } from "./pages/BrokersPage";
+import { BiPage } from "./pages/BiPage";
+import { BiSetupPage } from "./pages/BiSetupPage";
+import { PortfolioPage } from "./pages/PortfolioPage";
 
 function App() {
   return (
@@ -26,6 +29,9 @@ function App() {
           <Route path="/market" element={<MarketPage />} />
           <Route path="/orderbook" element={<OrderBookPage />} />
           <Route path="/brokers" element={<BrokersPage />} />
+          <Route path="/bi" element={<BiPage />} />
+          <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/admin/bi" element={<BiSetupPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -7,10 +7,19 @@
   news_*      news articles and the historical news backfill's bookkeeping.
   pipeline_*  workflow run log.
   app_*       dashboard application tables.
+  bi_*        business-intelligence service: per-script setup, the current
+              report (one row per script, overwritten), notifications and each
+              user's latest portfolio optimisation (one row per user).
 """
 from .app_user import AppUser
+from .bi_notification import BiNotification
+from .bi_portfolio import BiPortfolio
+from .bi_report import BiReport
+from .bi_setting import BiSetting
 from .market_backfill_state import MarketBackfillState
 from .market_broker import MarketBroker
+from .market_corporate_action import MarketCorporateAction
+from .market_fundamental_daily import MarketFundamentalDaily
 from .market_index_daily import MarketIndexDaily
 from .market_index_snapshot import MarketIndexSnapshot
 from .market_intraday_tick import MarketIntradayTick
@@ -29,8 +38,14 @@ from .pipeline_run import PipelineRun
 
 __all__ = [
     "AppUser",
+    "BiNotification",
+    "BiPortfolio",
+    "BiReport",
+    "BiSetting",
     "MarketBackfillState",
     "MarketBroker",
+    "MarketCorporateAction",
+    "MarketFundamentalDaily",
     "MarketIndexDaily",
     "MarketIndexSnapshot",
     "MarketIntradayTick",

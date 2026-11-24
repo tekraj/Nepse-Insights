@@ -21,6 +21,7 @@ from workflows.nepse_floor_sheet_eod_workflow import NepseFloorSheetEodSweepWork
 from workflows.nepse_end_of_day_workflow import NepseEndOfDayWorkflow
 from workflows.research_history_backfill_workflow import ResearchHistoryBackfillWorkflow
 from workflows.floor_sheet_history_backfill_workflow import FloorSheetHistoryBackfillWorkflow
+from workflows.company_fundamentals_workflow import CompanyFundamentalsWorkflow
 
 from activities.nepse_activities import (
     is_market_open_activity,
@@ -32,6 +33,11 @@ from activities.csv_import_activities import (
     parse_and_write_csv_activity,
 )
 from activities.pipeline_log_activities import write_pipeline_run_log_activity
+from activities.fundamentals_activities import (
+    capture_company_fundamentals_activity,
+    fundamentals_due_activity,
+    fundamentals_symbols_activity,
+)
 from activities.nepse_market_activities import (
     backfill_floor_sheet_day_activity,
     get_market_depth_universe_activity,
@@ -74,6 +80,7 @@ _GENERAL_QUEUE = "nepse-market-queue"
 _CSV_IMPORT_WORKFLOW_ID = "historical-nepse-csv-import-v2"
 _RESEARCH_BACKFILL_STARTUP_ID = "research-history-backfill-startup"
 _FLOOR_SHEET_HISTORY_STARTUP_ID = "floor-sheet-history-backfill-startup"
+_FUNDAMENTALS_STARTUP_ID = "company-fundamentals-startup"
 
 _ALL_WORKFLOWS = [
     NepseIndexScrapeWorkflow,
@@ -86,10 +93,14 @@ _ALL_WORKFLOWS = [
     NepseEndOfDayWorkflow,
     ResearchHistoryBackfillWorkflow,
     FloorSheetHistoryBackfillWorkflow,
+    CompanyFundamentalsWorkflow,
 ]
 
 _ALL_ACTIVITIES = [
     is_market_open_activity,
+    fundamentals_due_activity,
+    fundamentals_symbols_activity,
+    capture_company_fundamentals_activity,
     backfill_floor_sheet_day_activity,
     list_trading_days_activity,
     scrape_nepse_index_activity,
@@ -174,6 +185,19 @@ async def main() -> None:
             )
         except Exception as e:
             print(f"[Worker] Floor-sheet history backfill not started: {e}")
+        try:
+            # Fills market_fundamental_daily on first deploy / after a long
+            # outage; a no-op ("skipped") when today's run already happened
+            # or there was no session today.
+            await client.start_workflow(
+                CompanyFundamentalsWorkflow.run,
+                False,
+                id=_FUNDAMENTALS_STARTUP_ID,
+                task_queue=_GENERAL_QUEUE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+            )
+        except Exception as e:
+            print(f"[Worker] Company fundamentals capture not started: {e}")
 
     await worker.run()
 

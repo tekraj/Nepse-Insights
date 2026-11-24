@@ -1,3 +1,5 @@
+import { NotificationBell } from "./NotificationBell";
+
 export function TopBar({ onLogout, rightLink = null, hours = undefined, setHours = undefined }) {
   return (
     <>
@@ -22,6 +24,7 @@ export function TopBar({ onLogout, rightLink = null, hours = undefined, setHours
         </>
       ) : null}
       {rightLink}
+      <NotificationBell />
       <button className="btn-ghost" onClick={onLogout} type="button">
         Sign Out
       </button>

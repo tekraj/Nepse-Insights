@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import admin, articles, auth, dashboard, health
+from routers import admin, articles, auth, bi, dashboard, health
 
 app = FastAPI(title="NEPSE News Pipeline API", version="3.0.0")
 
@@ -22,6 +22,8 @@ app.include_router(articles.router)
 app.include_router(dashboard.router, prefix="/dashboard")
 app.include_router(admin.router, prefix="/admin")
 app.include_router(auth.router, prefix="/auth")
+app.include_router(bi.admin_router, prefix="/admin/bi")
+app.include_router(bi.router, prefix="/bi")
 
 
 if __name__ == "__main__":
